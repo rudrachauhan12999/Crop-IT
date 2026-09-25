@@ -10,13 +10,73 @@ import {
   KMEANS_CLUSTERS,
   ELBOW_CURVE_DATA
 } from './server/dataset';
-import {
-  predictCrop,
-  getModelMetrics,
-  generatePcaScatterPoints
-} from './server/mlEngine';
+import { generatePcaScatterPoints } from './server/mlEngine';
 import { PYTHON_TRAIN_SCRIPT, PYTHON_FASTAPI_SCRIPT } from './server/pythonScripts';
 import { SoilEnvironmentalInput } from './src/types/ml';
+
+/**
+ * Real ML backend gateway. Every route below that talks to the actual
+ * trained models (health, predict, metrics, model-info, dataset-summary)
+ * proxies to the Python FastAPI service and ONLY that service -- there is
+ * no fallback to server/mlEngine.ts's fake prediction/metrics logic. If
+ * the Python backend is not configured or unreachable, these routes
+ * return a real 503 error instead of fabricating a result.
+ *
+ * (server/mlEngine.ts's generatePcaScatterPoints, and the fake dataset
+ * constants below, are still used by /api/visualizations, /api/clusters
+ * and the combined /api/dataset-analysis route -- correlation/PCA/K-Means
+ * integration is Phase 7, intentionally out of scope here.)
+ */
+function getPythonBaseUrl(): string | null {
+  const url = process.env.PYTHON_BACKEND_URL;
+  return url ? url.replace(/\/$/, '') : null;
+}
+
+interface ProxyResult {
+  ok: boolean;
+  status: number;
+  body: any;
+}
+
+async function proxyToPython(
+  pathSuffix: string,
+  init: RequestInit = {},
+  timeoutMs = 8000
+): Promise<ProxyResult> {
+  const base = getPythonBaseUrl();
+  if (!base) {
+    return {
+      ok: false,
+      status: 503,
+      body: {
+        error: 'ML backend unavailable',
+        message:
+          'PYTHON_BACKEND_URL is not configured. Start the Python FastAPI service ' +
+          '(uvicorn app.main:app --reload --port 8000 from python_backend/) and set ' +
+          'PYTHON_BACKEND_URL=http://localhost:8000.'
+      }
+    };
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const pyRes = await fetch(`${base}${pathSuffix}`, { ...init, signal: controller.signal });
+    clearTimeout(timeoutId);
+    const body = await pyRes.json().catch(() => null);
+    return { ok: pyRes.ok, status: pyRes.status, body };
+  } catch (err: any) {
+    clearTimeout(timeoutId);
+    return {
+      ok: false,
+      status: 503,
+      body: {
+        error: 'ML backend unavailable',
+        message: `Could not reach the Python FastAPI service at ${base}. Please verify it is running.`
+      }
+    };
+  }
+}
 
 async function startServer() {
   const app = express();
@@ -24,24 +84,17 @@ async function startServer() {
 
   app.use(express.json());
 
-  // 1. Health & Status endpoint
-  app.get('/api/health', (req, res) => {
-    res.json({
-      status: 'ok',
-      engine: 'Crop-IT Native Scikit-Learn Matched ML Engine',
-      datasetLoaded: true,
-      totalSamples: DATASET_OVERVIEW.totalSamples,
-      classesCount: DATASET_OVERVIEW.classesCount,
-      activeAlgorithms: [
-        'Random Forest Classifier (Supervised)',
-        'K-Nearest Neighbors (Supervised)',
-        'Support Vector Machine (Supervised)',
-        'K-Means Clustering (Unsupervised)',
-        'PCA Dimensionality Reduction'
-      ],
-      externalPythonStatus: process.env.PYTHON_BACKEND_URL ? 'configured' : 'not_configured',
-      externalPythonUrl: process.env.PYTHON_BACKEND_URL || null
-    });
+  // 1. Health & Status endpoint -- proxied verbatim from the real backend.
+  app.get('/api/health', async (req, res) => {
+    const result = await proxyToPython('/api/health', {}, 4000);
+    res.status(result.ok ? 200 : result.status).json(
+      result.body ?? {
+        status: 'degraded',
+        modelLoaded: false,
+        model: null,
+        errors: { proxy: 'No response body from Python backend' }
+      }
+    );
   });
 
   // 2. Crop Prediction endpoint (POST /api/predict)
@@ -73,30 +126,15 @@ async function startServer() {
         rainfall: Number(rainfall)
       };
 
-      // If an external Python backend is configured, proxy to Python FastAPI backend
-      if (process.env.PYTHON_BACKEND_URL) {
-        try {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 4000);
-          const pyRes = await fetch(`${process.env.PYTHON_BACKEND_URL.replace(/\/$/, '')}/api/predict`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(input),
-            signal: controller.signal
-          });
-          clearTimeout(timeoutId);
-          if (pyRes.ok) {
-            const pyData = await pyRes.json();
-            return res.json({ ...pyData, backendSource: 'python-fastapi-backend' });
-          }
-        } catch {
-          // Fall back to native ML Engine
-        }
-      }
+      const result = await proxyToPython('/api/predict', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input)
+      });
 
-      // Execute ML engine
-      const prediction = predictCrop(input);
-      res.json(prediction);
+      return res.status(result.ok ? 200 : result.status).json(
+        result.body ?? { error: 'ML backend error', message: 'No response body from Python backend' }
+      );
     } catch (err: any) {
       console.error('Prediction Error:', err);
       res.status(500).json({ error: 'Inference failed', message: err?.message || 'Internal server error' });
@@ -105,68 +143,26 @@ async function startServer() {
 
   // 3. Model Performance Metrics (GET /api/metrics)
   app.get('/api/metrics', async (req, res) => {
-    try {
-      if (process.env.PYTHON_BACKEND_URL) {
-        try {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 3000);
-          const pyRes = await fetch(`${process.env.PYTHON_BACKEND_URL.replace(/\/$/, '')}/api/metrics`, {
-            signal: controller.signal
-          });
-          clearTimeout(timeoutId);
-          if (pyRes.ok) {
-            const pyData = await pyRes.json();
-            return res.json({ ...pyData, backendSource: 'python-fastapi-backend' });
-          }
-        } catch {
-          // Fall back to native dataset metrics
-        }
-      }
-
-      const metrics = getModelMetrics();
-      res.json(metrics);
-    } catch (err: any) {
-      res.status(500).json({ error: 'Failed to retrieve metrics' });
-    }
+    const result = await proxyToPython('/api/metrics');
+    res.status(result.ok ? 200 : result.status).json(
+      result.body ?? { error: 'ML backend error', message: 'No response body from Python backend' }
+    );
   });
 
-  // 4. Dataset Summary (GET /api/dataset-summary)
+  // 3b. Model Info (GET /api/model-info) -- selected model, schema, and training run metadata.
+  app.get('/api/model-info', async (req, res) => {
+    const result = await proxyToPython('/api/model-info');
+    res.status(result.ok ? 200 : result.status).json(
+      result.body ?? { error: 'ML backend error', message: 'No response body from Python backend' }
+    );
+  });
+
+  // 4. Dataset Summary (GET /api/dataset-summary) -- real CSV statistics, no native fallback.
   app.get('/api/dataset-summary', async (req, res) => {
-    try {
-      if (process.env.PYTHON_BACKEND_URL) {
-        try {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 3000);
-          const pyRes = await fetch(`${process.env.PYTHON_BACKEND_URL.replace(/\/$/, '')}/api/dataset-summary`, {
-            signal: controller.signal
-          });
-          clearTimeout(timeoutId);
-          if (pyRes.ok) {
-            const pyData = await pyRes.json();
-            return res.json(pyData);
-          }
-        } catch {
-          // Fall back to native dataset summary
-        }
-      }
-
-      const crops = Object.keys(CROP_PROFILES);
-      const cropDistribution = crops.map(c => ({
-        crop: c,
-        samples: 100,
-        category: CROP_PROFILES[c].category
-      }));
-
-      res.json({
-        datasetOverview: DATASET_OVERVIEW,
-        features: FEATURE_STATS,
-        cropClasses: crops,
-        cropDistribution,
-        backendSource: 'Kaggle Dataset Ground Truth'
-      });
-    } catch (err: any) {
-      res.status(500).json({ error: 'Failed to retrieve dataset summary' });
-    }
+    const result = await proxyToPython('/api/dataset-summary');
+    res.status(result.ok ? 200 : result.status).json(
+      result.body ?? { error: 'ML backend error', message: 'No response body from Python backend' }
+    );
   });
 
   // 5. Visualizations Data (GET /api/visualizations)

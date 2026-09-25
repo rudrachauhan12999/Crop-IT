@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { DatasetAnalysisResponse, FeatureStat, CropDistributionItem } from '../types/ml';
-import { fetchDatasetAnalysis, BACKEND_UNAVAILABLE_MESSAGE } from '../services/api';
+import { DatasetSummaryResponse, VisualizationsResponse, FeatureStat, CropDistributionItem } from '../types/ml';
+import { fetchDatasetSummary, fetchVisualizations, BACKEND_UNAVAILABLE_MESSAGE } from '../services/api';
 import { CorrelationHeatmap } from '../components/CorrelationHeatmap';
 import { PcaPlot } from '../components/PcaPlot';
 import {
@@ -28,24 +28,31 @@ import {
   Cell
 } from 'recharts';
 
+/** Physical unit labels for the known feature columns. Presentation only, not derived statistics. */
+const FEATURE_UNITS: Record<string, string> = {
+  N: 'ppm',
+  P: 'ppm',
+  K: 'ppm',
+  temperature: '°C',
+  humidity: '%',
+  ph: 'pH',
+  rainfall: 'mm'
+};
+
 export const DatasetAnalysis: React.FC = () => {
-  const [data, setData] = useState<DatasetAnalysisResponse | null>(null);
+  // Real dataset statistics (GET /api/dataset-summary) -- Phase 6.
+  const [summary, setSummary] = useState<DatasetSummaryResponse | null>(null);
+  // Correlation/PCA (GET /api/visualizations) -- still native-fallback pending Phase 7.
+  const [visualizations, setVisualizations] = useState<VisualizationsResponse | null>(null);
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  
-  // Custom uploaded dataset state
+
+  // Custom uploaded dataset state -- shaped identically to DatasetSummaryResponse
+  // so it can be swapped in for `summary` with no extra mapping.
   const [isCustomUploaded, setIsCustomUploaded] = useState(false);
   const [customFileName, setCustomFileName] = useState<string>('');
-  const [customStats, setCustomStats] = useState<{
-    totalSamples: number;
-    featuresCount: number;
-    classesCount: number;
-    missingValues: number;
-    duplicateRows: number;
-    targetColumn: string;
-    features: FeatureStat[];
-    cropDistribution: CropDistributionItem[];
-  } | null>(null);
+  const [customStats, setCustomStats] = useState<DatasetSummaryResponse | null>(null);
 
   const [isBackendUnavailable, setIsBackendUnavailable] = useState(false);
 
@@ -56,8 +63,9 @@ export const DatasetAnalysis: React.FC = () => {
     setError(null);
     setIsBackendUnavailable(false);
     try {
-      const res = await fetchDatasetAnalysis();
-      setData(res);
+      const [summaryRes, vizRes] = await Promise.all([fetchDatasetSummary(), fetchVisualizations()]);
+      setSummary(summaryRes);
+      setVisualizations(vizRes);
       setIsCustomUploaded(false);
       setCustomStats(null);
       setCustomFileName('');
@@ -98,7 +106,7 @@ export const DatasetAnalysis: React.FC = () => {
 
         const headers = lines[0].split(',').map((h) => h.trim().replace(/^["']|["']$/g, ''));
         const rowStrings = lines.slice(1);
-        
+
         let missingCount = 0;
         const rowSet = new Set<string>();
         let duplicateCount = 0;
@@ -155,16 +163,13 @@ export const DatasetAnalysis: React.FC = () => {
 
           return {
             feature: col,
-            name: col.toUpperCase(),
-            unit: 'units',
             min: Number(min.toFixed(2)),
             max: Number(max.toFixed(2)),
             mean: Number(mean.toFixed(2)),
             median: Number(median.toFixed(2)),
             std: Number(std.toFixed(2)),
             q25: Number(q25.toFixed(2)),
-            q75: Number(q75.toFixed(2)),
-            description: `Distribution calculated from uploaded dataset column ${col}`
+            q75: Number(q75.toFixed(2))
           };
         });
 
@@ -177,19 +182,18 @@ export const DatasetAnalysis: React.FC = () => {
 
         const computedCropDistribution: CropDistributionItem[] = Object.keys(classMap).map((k) => ({
           crop: k,
-          samples: classMap[k],
-          category: 'Uploaded Data'
+          samples: classMap[k]
         }));
 
         setCustomStats({
           totalSamples: parsedRows.length,
-          featuresCount: numericCols.length,
-          classesCount: Object.keys(classMap).length,
+          featureCount: numericCols.length,
+          classCount: Object.keys(classMap).length,
           missingValues: missingCount,
           duplicateRows: duplicateCount,
           targetColumn: targetColCandidate,
           features: computedFeatures,
-          cropDistribution: computedCropDistribution
+          classDistribution: computedCropDistribution
         });
 
         setIsCustomUploaded(true);
@@ -211,7 +215,7 @@ export const DatasetAnalysis: React.FC = () => {
     );
   }
 
-  if (error || !data) {
+  if (error || !summary) {
     return (
       <div className="max-w-xl mx-auto my-12">
         <div className="p-6 rounded-2xl bg-red-50 border border-red-200 text-red-800 text-xs space-y-4 shadow-sm">
@@ -251,22 +255,11 @@ export const DatasetAnalysis: React.FC = () => {
     );
   }
 
-  // Active metrics to display (custom uploaded vs Kaggle dataset)
-  const activeOverview = isCustomUploaded && customStats ? {
-    totalSamples: customStats.totalSamples,
-    featuresCount: customStats.featuresCount,
-    classesCount: customStats.classesCount,
-    missingValues: customStats.missingValues,
-    duplicateRows: customStats.duplicateRows,
-    source: customFileName || 'Custom Uploaded CSV',
-    targetColumn: customStats.targetColumn
-  } : data.datasetOverview;
+  // Active summary to display (custom uploaded vs real Kaggle dataset) -- same shape either way.
+  const activeSummary: DatasetSummaryResponse = isCustomUploaded && customStats ? customStats : summary;
 
-  const activeFeatures = isCustomUploaded && customStats ? customStats.features : data.features;
-  const activeDistribution = isCustomUploaded && customStats ? customStats.cropDistribution : data.cropDistribution;
-
-  const missingPercentage = ((activeOverview.missingValues / ((activeOverview.totalSamples * (activeOverview.featuresCount + 1)) || 1)) * 100).toFixed(1);
-  const duplicatePercentage = ((activeOverview.duplicateRows / (activeOverview.totalSamples || 1)) * 100).toFixed(1);
+  const missingPercentage = ((activeSummary.missingValues / ((activeSummary.totalSamples * (activeSummary.featureCount + 1)) || 1)) * 100).toFixed(1);
+  const duplicatePercentage = ((activeSummary.duplicateRows / (activeSummary.totalSamples || 1)) * 100).toFixed(1);
 
   return (
     <div className="space-y-8 max-w-7xl mx-auto">
@@ -287,7 +280,7 @@ export const DatasetAnalysis: React.FC = () => {
                 </span>
               ) : (
                 <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold border border-emerald-200">
-                  Kaggle 2,200 Default
+                  Real Backend Data
                 </span>
               )}
             </div>
@@ -319,7 +312,7 @@ export const DatasetAnalysis: React.FC = () => {
               id="reset-default-dataset-btn"
               onClick={loadDefaultData}
               className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-xs font-semibold border border-zinc-300 transition-colors cursor-pointer"
-              title="Reset to Kaggle 2,200 dataset"
+              title="Reset to the real backend dataset"
             >
               <RotateCcw className="w-3.5 h-3.5" />
               <span>Reset</span>
@@ -333,7 +326,7 @@ export const DatasetAnalysis: React.FC = () => {
         <div className="p-4 rounded-2xl bg-white border-2 border-emerald-200 shadow-xs">
           <span className="text-[10px] uppercase font-bold text-zinc-600 tracking-wider block">Total Samples</span>
           <strong className="text-2xl font-black text-zinc-900 block mt-1">
-            {activeOverview.totalSamples.toLocaleString()}
+            {activeSummary.totalSamples.toLocaleString()}
           </strong>
           <span className="text-[11px] text-emerald-700 font-medium">
             {isCustomUploaded ? 'Rows in Uploaded CSV' : 'Rows in Kaggle Dataset'}
@@ -343,7 +336,7 @@ export const DatasetAnalysis: React.FC = () => {
         <div className="p-4 rounded-2xl bg-white border-2 border-emerald-200 shadow-xs">
           <span className="text-[10px] uppercase font-bold text-zinc-600 tracking-wider block">Feature Dimensions</span>
           <strong className="text-2xl font-black text-zinc-900 block mt-1">
-            {activeOverview.featuresCount}
+            {activeSummary.featureCount}
           </strong>
           <span className="text-[11px] text-zinc-500">Continuous Variables</span>
         </div>
@@ -351,18 +344,18 @@ export const DatasetAnalysis: React.FC = () => {
         <div className="p-4 rounded-2xl bg-white border-2 border-emerald-200 shadow-xs">
           <span className="text-[10px] uppercase font-bold text-zinc-600 tracking-wider block">Target Classes</span>
           <strong className="text-2xl font-black text-zinc-900 block mt-1">
-            {activeOverview.classesCount}
+            {activeSummary.classCount}
           </strong>
           <span className="text-[11px] text-zinc-500">Distinct Categories</span>
         </div>
 
         <div className="p-4 rounded-2xl bg-white border-2 border-emerald-200 shadow-xs">
           <span className="text-[10px] uppercase font-bold text-zinc-600 tracking-wider block">Missing Values</span>
-          <strong className={`text-2xl font-black block mt-1 ${activeOverview.missingValues > 0 ? 'text-amber-600' : 'text-emerald-700'}`}>
-            {activeOverview.missingValues} ({missingPercentage}%)
+          <strong className={`text-2xl font-black block mt-1 ${activeSummary.missingValues > 0 ? 'text-amber-600' : 'text-emerald-700'}`}>
+            {activeSummary.missingValues} ({missingPercentage}%)
           </strong>
           <span className="text-[11px] text-zinc-600 font-medium flex items-center gap-1">
-            {activeOverview.missingValues === 0 ? (
+            {activeSummary.missingValues === 0 ? (
               <>
                 <CheckCircle2 className="w-3 h-3 text-emerald-600 inline" /> Complete Data
               </>
@@ -376,11 +369,11 @@ export const DatasetAnalysis: React.FC = () => {
 
         <div className="p-4 rounded-2xl bg-white border-2 border-emerald-200 shadow-xs">
           <span className="text-[10px] uppercase font-bold text-zinc-600 tracking-wider block">Duplicate Rows</span>
-          <strong className={`text-2xl font-black block mt-1 ${activeOverview.duplicateRows > 0 ? 'text-amber-600' : 'text-emerald-700'}`}>
-            {activeOverview.duplicateRows} ({duplicatePercentage}%)
+          <strong className={`text-2xl font-black block mt-1 ${activeSummary.duplicateRows > 0 ? 'text-amber-600' : 'text-emerald-700'}`}>
+            {activeSummary.duplicateRows} ({duplicatePercentage}%)
           </strong>
           <span className="text-[11px] text-zinc-600 font-medium flex items-center gap-1">
-            {activeOverview.duplicateRows === 0 ? (
+            {activeSummary.duplicateRows === 0 ? (
               <>
                 <CheckCircle2 className="w-3 h-3 text-emerald-600 inline" /> Zero Duplicates
               </>
@@ -399,11 +392,11 @@ export const DatasetAnalysis: React.FC = () => {
           <div>
             <h3 className="text-base font-bold text-zinc-900">Feature Descriptive Statistical Summary</h3>
             <p className="text-xs text-zinc-500">
-              Calculated across {activeOverview.totalSamples.toLocaleString()} dataset observations
+              Calculated across {activeSummary.totalSamples.toLocaleString()} dataset observations
             </p>
           </div>
           <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-800 border-2 border-emerald-200 self-start sm:self-auto">
-            {activeFeatures.length} Numeric Features
+            {activeSummary.features.length} Numeric Features
           </span>
         </div>
 
@@ -411,27 +404,32 @@ export const DatasetAnalysis: React.FC = () => {
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="border-b-2 border-zinc-300 bg-zinc-100/90 text-xs text-zinc-800 font-bold">
-                <th className="py-3 px-4 border-r border-zinc-200">Feature Name</th>
-                <th className="py-3 px-4 border-r border-zinc-200">Symbol &amp; Unit</th>
+                <th className="py-3 px-4 border-r border-zinc-200">Feature</th>
                 <th className="py-3 px-4 border-r border-zinc-200 text-right">Min</th>
                 <th className="py-3 px-4 border-r border-zinc-200 text-right text-emerald-800 bg-emerald-50/50">Mean (μ)</th>
                 <th className="py-3 px-4 border-r border-zinc-200 text-right">Std Dev (σ)</th>
                 <th className="py-3 px-4 border-r border-zinc-200 text-right">Median</th>
-                <th className="py-3 px-4 border-r border-zinc-200 text-right">Max</th>
-                <th className="py-3 px-4">Description</th>
+                <th className="py-3 px-4 border-r border-zinc-200 text-right">Q25</th>
+                <th className="py-3 px-4 border-r border-zinc-200 text-right">Q75</th>
+                <th className="py-3 px-4 text-right">Max</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-200 bg-white text-xs font-mono">
-              {activeFeatures.map((f, idx) => (
+              {activeSummary.features.map((f, idx) => (
                 <tr key={idx} className="hover:bg-zinc-50 border-b border-zinc-100">
-                  <td className="py-3.5 px-4 font-sans font-bold text-zinc-900 border-r border-zinc-200">{f.name}</td>
-                  <td className="py-3.5 px-4 text-zinc-700 border-r border-zinc-200">{f.feature} ({f.unit})</td>
+                  <td className="py-3.5 px-4 font-sans font-bold text-zinc-900 border-r border-zinc-200">
+                    {f.feature}
+                    {FEATURE_UNITS[f.feature] && (
+                      <span className="font-normal text-zinc-500"> ({FEATURE_UNITS[f.feature]})</span>
+                    )}
+                  </td>
                   <td className="py-3.5 px-4 text-right font-medium text-zinc-700 border-r border-zinc-200">{f.min}</td>
                   <td className="py-3.5 px-4 text-right font-bold text-emerald-800 border-r border-zinc-200 bg-emerald-50/20">{f.mean.toFixed(2)}</td>
                   <td className="py-3.5 px-4 text-right font-medium text-zinc-600 border-r border-zinc-200">±{f.std.toFixed(2)}</td>
                   <td className="py-3.5 px-4 text-right font-medium text-zinc-700 border-r border-zinc-200">{f.median.toFixed(2)}</td>
-                  <td className="py-3.5 px-4 text-right font-medium text-zinc-700 border-r border-zinc-200">{f.max}</td>
-                  <td className="py-3.5 px-4 font-sans text-zinc-600 max-w-xs">{f.description}</td>
+                  <td className="py-3.5 px-4 text-right font-medium text-zinc-700 border-r border-zinc-200">{f.q25.toFixed(2)}</td>
+                  <td className="py-3.5 px-4 text-right font-medium text-zinc-700 border-r border-zinc-200">{f.q75.toFixed(2)}</td>
+                  <td className="py-3.5 px-4 text-right font-medium text-zinc-700">{f.max}</td>
                 </tr>
               ))}
             </tbody>
@@ -444,19 +442,19 @@ export const DatasetAnalysis: React.FC = () => {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div>
             <h3 className="text-base font-bold text-zinc-900">
-              Target Class Distribution ({activeDistribution.length} Categories)
+              Target Class Distribution ({activeSummary.classDistribution.length} Categories)
             </h3>
             <p className="text-xs text-zinc-500">Observations per category in the loaded dataset</p>
           </div>
           <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 border-2 border-emerald-200">
-            {activeOverview.totalSamples.toLocaleString()} Total Records
+            {activeSummary.totalSamples.toLocaleString()} Total Records
           </span>
         </div>
 
         <div className="h-64 w-full p-2 bg-zinc-50/50 rounded-xl border border-zinc-200">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart
-              data={activeDistribution}
+              data={activeSummary.classDistribution}
               margin={{ top: 10, right: 10, left: -20, bottom: 40 }}
             >
               <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
@@ -481,7 +479,7 @@ export const DatasetAnalysis: React.FC = () => {
                 formatter={(val: any) => [`${val} samples`, 'Count']}
               />
               <Bar dataKey="samples" fill="#059669" radius={[4, 4, 0, 0]}>
-                {activeDistribution.map((entry, index) => (
+                {activeSummary.classDistribution.map((entry, index) => (
                   <Cell key={`cell-${index}`} fill={index % 2 === 0 ? '#059669' : '#10b981'} />
                 ))}
               </Bar>
@@ -490,14 +488,16 @@ export const DatasetAnalysis: React.FC = () => {
         </div>
       </div>
 
-      {/* Feature Correlation Heatmap Component */}
-      <CorrelationHeatmap
-        features={data.correlationMatrix.features}
-        matrix={data.correlationMatrix.matrix}
-      />
+      {/* Feature Correlation Heatmap Component (Phase 7: still native-fallback data) */}
+      {visualizations && (
+        <CorrelationHeatmap
+          features={visualizations.correlationMatrix.features}
+          matrix={visualizations.correlationMatrix.matrix}
+        />
+      )}
 
-      {/* PCA 2D Scatter Plot Component */}
-      <PcaPlot data={data.pcaSamples} />
+      {/* PCA 2D Scatter Plot Component (Phase 7: still native-fallback data) */}
+      {visualizations && <PcaPlot data={visualizations.pcaSamples} />}
     </div>
   );
 };

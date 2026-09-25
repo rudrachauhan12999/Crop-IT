@@ -11,7 +11,50 @@ import {
   KMEANS_CLUSTERS,
   CropDatasetProfile
 } from './dataset';
-import { SoilEnvironmentalInput, PredictionResponse, ModelMetricsResponse, PcaDataPoint } from '../src/types/ml';
+import { SoilEnvironmentalInput, PredictionResponse, PcaDataPoint } from '../src/types/ml';
+
+/**
+ * Legacy shape returned by getModelMetrics() below. This engine is no
+ * longer called by server.ts (Phase 6 removed the fallback), so this type
+ * intentionally no longer shares a name with the real
+ * ModelMetricsResponse in src/types/ml.ts, which now matches the actual
+ * FastAPI /api/metrics contract. Kept only so this file still typechecks
+ * until Phase 9 removes it entirely.
+ */
+interface LegacyModelMetricsResponse {
+  models: {
+    name: string;
+    type: string;
+    accuracy: number;
+    precision: number;
+    recall: number;
+    f1: number;
+    trainTestSplit: string;
+    testSamples: number;
+    parameters: string;
+    trainingTime: string;
+    advantages: string;
+    limitations: string;
+  }[];
+  bestModel: string;
+  evaluationSummary: {
+    totalDatasetSize: number;
+    featuresCount: number;
+    classesCount: number;
+    metricFormula: string;
+    crossValidationScore: {
+      mean: number;
+      std: number;
+      folds: number;
+    };
+  };
+  confusionMatrixHighlight: {
+    totalTested: number;
+    correctPredictions: number;
+    misclassifications: number;
+  };
+  backendSource: string;
+}
 
 // Feature scaling constants (Mean and Std across all 2,200 samples)
 const SCALER_PARAMS = {
@@ -187,7 +230,7 @@ export function predictCrop(input: SoilEnvironmentalInput): PredictionResponse {
 }
 
 // Model Evaluation Metrics computed from 80/20 train/test split on 2,200 Kaggle samples
-export function getModelMetrics(): ModelMetricsResponse {
+export function getModelMetrics(): LegacyModelMetricsResponse {
   return {
     models: [
       {

@@ -3,7 +3,7 @@
  * Connects frontend UI components to external Python FastAPI ML backend / Express gateway.
  * 
  * Features:
- * - Endpoints: POST /api/predict, GET /api/metrics, GET /api/dataset-summary, GET /api/visualizations, GET /api/clusters
+ * - Endpoints: POST /api/predict, GET /api/metrics, GET /api/model-info, GET /api/dataset-summary, GET /api/visualizations, GET /api/clusters
  * - Configurable API base URL via VITE_API_BASE_URL
  * - Input validation with clear error messages
  * - Request timeout handling (AbortController)
@@ -18,6 +18,7 @@ import {
   MetricsRequest,
   MetricsResponse,
   ModelMetricsResponse,
+  ModelInfoResponse,
   DatasetSummaryRequest,
   DatasetSummaryResponse,
   VisualizationsRequest,
@@ -146,10 +147,19 @@ async function fetchWithTimeout<T>(
         if (errorJson.details && Array.isArray(errorJson.details)) {
           errDetails = errorJson.details;
           errMsg = errDetails.join(', ');
+        } else if (Array.isArray(errorJson.detail)) {
+          // FastAPI/Pydantic 422 shape: detail is a list of
+          // { loc: [...], msg: string, type: string }
+          errDetails = errorJson.detail.map((d: any) => {
+            const field = Array.isArray(d?.loc) ? d.loc[d.loc.length - 1] : undefined;
+            return field ? `${field}: ${d.msg}` : String(d?.msg ?? d);
+          });
+          errMsg = errDetails.join(', ');
         } else if (errorJson.detail) {
           errMsg = typeof errorJson.detail === 'string' ? errorJson.detail : JSON.stringify(errorJson.detail);
         } else if (errorJson.error) {
-          errMsg = errorJson.error;
+          errMsg = typeof errorJson.error === 'string' ? errorJson.error : JSON.stringify(errorJson.error);
+          if (errorJson.message) errMsg = `${errMsg}: ${errorJson.message}`;
         } else if (errorJson.message) {
           errMsg = errorJson.message;
         }
@@ -233,6 +243,16 @@ export async function fetchModelMetrics(params?: MetricsRequest): Promise<Metric
 export async function fetchDatasetSummary(params?: DatasetSummaryRequest): Promise<DatasetSummaryResponse> {
   const query = params?.dataset ? `?dataset=${encodeURIComponent(params.dataset)}` : '';
   return await fetchWithTimeout<DatasetSummaryResponse>(`/api/dataset-summary${query}`);
+}
+
+/**
+ * GET /api/model-info
+ * Fetches the selected model, feature/target schema, class names, and
+ * training run metadata straight from the Phase 4 model_metadata.json
+ * (served by the Python backend).
+ */
+export async function fetchModelInfo(): Promise<ModelInfoResponse> {
+  return await fetchWithTimeout<ModelInfoResponse>('/api/model-info');
 }
 
 /**
@@ -451,12 +471,13 @@ export async function checkBackendHealth(): Promise<BackendHealthResponse> {
     return await fetchWithTimeout<BackendHealthResponse>('/api/health', {}, 4000);
   } catch (error: any) {
     // Backend is unreachable: report an honest offline status without
-    // fabricating dataset/model figures that were never actually confirmed.
+    // fabricating a model name or dataset figures that were never
+    // actually confirmed.
     return {
       status: 'degraded',
-      engine: 'Python ML Backend Disconnected',
-      datasetLoaded: false,
-      externalPythonStatus: 'offline'
+      modelLoaded: false,
+      model: null,
+      errors: { network: BACKEND_UNAVAILABLE_MESSAGE }
     };
   }
 }

@@ -55,7 +55,7 @@ export interface PredictionResponse {
     soilType: string;
     description: string;
   };
-  backendSource: 'native-ml-engine' | 'python-fastapi-backend' | string;
+  backendSource: 'python-fastapi-backend' | string;
 }
 
 export type PredictResponse = PredictionResponse;
@@ -64,19 +64,23 @@ export interface MetricsRequest {
   dataset?: string;
 }
 
+/**
+ * Matches FastAPI's /api/metrics ModelMetricEntry exactly (python_backend/app/schemas.py).
+ * `model` is the internal model key (e.g. "random_forest", "knn", "svm").
+ */
 export interface ModelMetric {
-  name: string;
-  type: string;
+  model: string;
   accuracy: number;
   precision: number;
   recall: number;
   f1: number;
-  trainTestSplit: string;
-  testSamples: number;
-  parameters: string;
-  trainingTime: string;
-  advantages: string;
-  limitations: string;
+  macroF1: number;
+  weightedF1: number;
+  trainingTimeSeconds: number;
+  cvAccuracyMean: number;
+  cvAccuracyStd: number;
+  cvMacroF1Mean: number;
+  cvMacroF1Std: number;
 }
 
 export interface PerClassMetric {
@@ -115,25 +119,14 @@ export interface ConfusionMatrixData {
   errors: ConfusionMatrixErrorDetail[];
 }
 
+/** Matches FastAPI's /api/metrics MetricsResponse exactly. */
 export interface ModelMetricsResponse {
   models: ModelMetric[];
-  bestModel: string;
-  evaluationSummary: {
-    totalDatasetSize: number;
-    featuresCount: number;
-    classesCount: number;
-    metricFormula: string;
-    crossValidationScore: {
-      mean: number;
-      std: number;
-      folds: number;
-    };
-  };
-  confusionMatrixHighlight: {
-    totalTested: number;
-    correctPredictions: number;
-    misclassifications: number;
-  };
+  selectedModel: string;
+  selectionCriterion: string;
+  selectionRationale: string;
+  trainSampleCount: number;
+  testSampleCount: number;
   backendSource: string;
 }
 
@@ -145,8 +138,6 @@ export interface DatasetSummaryRequest {
 
 export interface FeatureStat {
   feature: string;
-  name: string;
-  unit: string;
   min: number;
   max: number;
   mean: number;
@@ -154,29 +145,38 @@ export interface FeatureStat {
   std: number;
   q25: number;
   q75: number;
-  description: string;
 }
 
 export interface CropDistributionItem {
   crop: string;
   samples: number;
-  category: string;
 }
 
+/** Matches FastAPI's /api/dataset-summary DatasetSummaryResponse exactly (flat, no nesting). */
 export interface DatasetSummaryResponse {
-  datasetOverview: {
-    totalSamples: number;
-    featuresCount: number;
-    classesCount: number;
-    missingValues: number;
-    duplicateRows: number;
-    source: string;
-    targetColumn: string;
-  };
+  totalSamples: number;
+  featureCount: number;
+  classCount: number;
+  missingValues: number;
+  duplicateRows: number;
+  targetColumn: string;
+  classDistribution: CropDistributionItem[];
   features: FeatureStat[];
-  cropClasses: string[];
-  cropDistribution: CropDistributionItem[];
-  backendSource: string;
+}
+
+/** Matches FastAPI's /api/model-info ModelInfoResponse exactly. */
+export interface ModelInfoResponse {
+  selectedModel: string;
+  featureNames: string[];
+  target: string;
+  classNames: string[];
+  datasetRowCount: number;
+  trainingTimestampUtc: string;
+  randomState: number;
+  testSize: number;
+  availableModels: string[];
+  pythonVersion: string;
+  sklearnVersion: string;
 }
 
 export interface VisualizationsRequest {
@@ -215,6 +215,14 @@ export interface PcaDataPoint {
   rainfall: number;
 }
 
+/**
+ * The combined /api/dataset-analysis endpoint (server.ts) is not yet wired
+ * to the real Python backend -- its correlation/PCA portions remain
+ * Phase 7 work, so this type intentionally keeps its own legacy feature/
+ * distribution shape (with the narrative name/unit/description/category
+ * fields the still-fake native fallback returns) rather than reusing the
+ * now-real FeatureStat/CropDistributionItem types above.
+ */
 export interface DatasetAnalysisResponse {
   datasetOverview: {
     totalSamples: number;
@@ -225,9 +233,25 @@ export interface DatasetAnalysisResponse {
     source: string;
     targetColumn: string;
   };
-  features: FeatureStat[];
+  features: {
+    feature: string;
+    name: string;
+    unit: string;
+    min: number;
+    max: number;
+    mean: number;
+    median: number;
+    std: number;
+    q25: number;
+    q75: number;
+    description: string;
+  }[];
   cropClasses: string[];
-  cropDistribution: CropDistributionItem[];
+  cropDistribution: {
+    crop: string;
+    samples: number;
+    category: string;
+  }[];
   correlationMatrix: {
     features: string[];
     matrix: number[][];
@@ -309,13 +333,10 @@ export interface PipelineStage {
   formulaOrCodeSnippet?: string;
 }
 
+/** Matches FastAPI's /api/health HealthResponse exactly (proxied verbatim by server.ts). */
 export interface BackendHealthResponse {
   status: 'ok' | 'degraded';
-  engine: string;
-  datasetLoaded: boolean;
-  totalSamples?: number;
-  classesCount?: number;
-  activeAlgorithms?: string[];
-  externalPythonStatus: 'connected' | 'not_configured' | 'offline';
-  externalPythonUrl?: string;
+  modelLoaded: boolean;
+  model: string | null;
+  errors?: Record<string, string> | null;
 }

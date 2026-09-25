@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ModelMetricsResponse, ModelMetric } from '../types/ml';
+import { ModelMetricsResponse } from '../types/ml';
 import { fetchModelMetrics, BACKEND_UNAVAILABLE_MESSAGE } from '../services/api';
 import { MetricCharts } from '../components/MetricCharts';
 import { ConfusionMatrix } from '../components/ConfusionMatrix';
@@ -22,6 +22,17 @@ import {
   Terminal
 } from 'lucide-react';
 import BorderGlow from '../components/BorderGlow';
+
+/** Presentation-only label mapping for the backend's internal model keys. Not ML data. */
+const MODEL_DISPLAY_NAMES: Record<string, string> = {
+  random_forest: 'Random Forest',
+  knn: 'K-Nearest Neighbors (KNN)',
+  svm: 'Support Vector Machine (SVM)'
+};
+
+function displayModelName(key: string): string {
+  return MODEL_DISPLAY_NAMES[key] ?? key;
+}
 
 export const ModelPerformance: React.FC = () => {
   const [metrics, setMetrics] = useState<ModelMetricsResponse | null>(null);
@@ -106,6 +117,8 @@ export const ModelPerformance: React.FC = () => {
     );
   }
 
+  const bestModelMetric = metrics.models.find((m) => m.model === metrics.selectedModel);
+
   return (
     <div className="space-y-8 max-w-7xl mx-auto">
       {/* Top Best Model Highlight Card with BorderGlow */}
@@ -123,12 +136,13 @@ export const ModelPerformance: React.FC = () => {
               <Award className="w-4 h-4 text-amber-300" />
               <span>Optimal Supervised Model Identified</span>
             </div>
-            
+
             <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
-              {metrics.bestModel} — 99.32% Accuracy
+              {displayModelName(metrics.selectedModel)}
+              {bestModelMetric && ` — ${(bestModelMetric.accuracy * 100).toFixed(2)}% Accuracy`}
             </h2>
             <p className="text-xs sm:text-sm text-emerald-100/90 leading-relaxed">
-              Random Forest achieves the highest generalization accuracy, precision, and F1-score across all 22 crop classes on the Kaggle test set. Its ensemble of 100 decision trees effectively captures non-linear agronomic thresholds without feature scaling artifacts.
+              {metrics.selectionRationale}
             </p>
           </div>
 
@@ -136,9 +150,11 @@ export const ModelPerformance: React.FC = () => {
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 shrink-0 w-full lg:w-auto">
             {/* 5-Fold Cross Validation Box */}
             <div className="p-4 rounded-xl bg-white/10 backdrop-blur-xs border border-white/15 text-center shrink-0 flex-1 sm:flex-none">
-              <span className="text-[10px] uppercase font-bold text-emerald-200 tracking-wider block">5-Fold Cross Validation</span>
-              <span className="text-2xl font-black text-white block mt-0.5">99.27% ± 0.31%</span>
-              <span className="text-[11px] text-emerald-300 block">Stratified K-Fold</span>
+              <span className="text-[10px] uppercase font-bold text-emerald-200 tracking-wider block">Cross Validation</span>
+              <span className="text-2xl font-black text-white block mt-0.5">
+                {bestModelMetric ? `${(bestModelMetric.cvAccuracyMean * 100).toFixed(2)}% ± ${(bestModelMetric.cvAccuracyStd * 100).toFixed(2)}%` : '—'}
+              </span>
+              <span className="text-[11px] text-emerald-300 block">Stratified K-Fold (Train Split Only)</span>
             </div>
 
             {/* Dataset Button beside 5-Fold Box */}
@@ -174,7 +190,9 @@ export const ModelPerformance: React.FC = () => {
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <h3 className="text-base font-bold text-zinc-900">Supervised Model Performance Comparison</h3>
-              <p className="text-xs text-zinc-500">Evaluated on 440 stratified test samples (20% holdout split)</p>
+              <p className="text-xs text-zinc-500">
+                Evaluated on {metrics.testSampleCount} stratified test samples ({metrics.trainSampleCount} training)
+              </p>
             </div>
             <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
               <a
@@ -188,9 +206,11 @@ export const ModelPerformance: React.FC = () => {
                 <span>Dataset</span>
                 <ExternalLink className="w-3 h-3" />
               </a>
-              <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
-                All Models Exceed 80% Requirement
-              </span>
+              {metrics.models.every((m) => m.accuracy >= 0.8) && (
+                <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
+                  All Models Exceed 80% Requirement
+                </span>
+              )}
             </div>
           </div>
 
@@ -199,7 +219,6 @@ export const ModelPerformance: React.FC = () => {
               <thead>
                 <tr className="border-b-2 border-zinc-300 bg-zinc-100/90">
                   <th className="py-3 px-4 text-xs font-bold text-zinc-800 border-r border-zinc-200">Model Name</th>
-                  <th className="py-3 px-4 text-xs font-bold text-zinc-800 border-r border-zinc-200">Algorithm Family</th>
                   <th className="py-3 px-4 text-xs font-bold text-emerald-800 text-center border-r border-zinc-200 bg-emerald-50/50">Accuracy</th>
                   <th className="py-3 px-4 text-xs font-bold text-sky-800 text-center border-r border-zinc-200 bg-sky-50/50">Precision</th>
                   <th className="py-3 px-4 text-xs font-bold text-amber-800 text-center border-r border-zinc-200 bg-amber-50/50">Recall</th>
@@ -209,18 +228,17 @@ export const ModelPerformance: React.FC = () => {
               </thead>
               <tbody className="divide-y divide-zinc-200 text-xs">
                 {metrics.models.map((model, idx) => {
-                  const isBest = model.name.includes(metrics.bestModel.split(' ')[0]);
+                  const isBest = model.model === metrics.selectedModel;
                   return (
                     <tr key={idx} className={isBest ? 'bg-emerald-50/60 font-semibold' : 'hover:bg-zinc-50'}>
                       <td className="py-3.5 px-4 font-bold text-zinc-900 flex items-center gap-2 border-r border-zinc-200">
-                        {model.name}
+                        {displayModelName(model.model)}
                         {isBest && (
                           <span className="px-2 py-0.5 rounded-full bg-emerald-600 text-white text-[10px] font-bold border border-emerald-700 shadow-2xs">
                             Best
                           </span>
                         )}
                       </td>
-                      <td className="py-3.5 px-4 text-zinc-700 border-r border-zinc-200">{model.type}</td>
                       <td className="py-3.5 px-4 text-center font-bold text-emerald-900 bg-emerald-50/30 border-r border-zinc-200">
                         {(model.accuracy * 100).toFixed(2)}%
                       </td>
@@ -233,7 +251,7 @@ export const ModelPerformance: React.FC = () => {
                       <td className="py-3.5 px-4 text-center font-bold text-purple-900 bg-purple-50/30 border-r border-zinc-200">
                         {(model.f1 * 100).toFixed(2)}%
                       </td>
-                      <td className="py-3.5 px-4 text-center text-zinc-600 font-mono">{model.trainingTime}</td>
+                      <td className="py-3.5 px-4 text-center text-zinc-600 font-mono">{model.trainingTimeSeconds.toFixed(3)}s</td>
                     </tr>
                   );
                 })}
@@ -244,14 +262,14 @@ export const ModelPerformance: React.FC = () => {
       </BorderGlow>
 
       {/* Visual Chart Comparison */}
-      <MetricCharts models={metrics.models} />
+      <MetricCharts models={metrics.models} testSampleCount={metrics.testSampleCount} />
 
       {/* Interactive Confusion Matrix for Supervised Classifiers */}
       <ConfusionMatrix />
 
       {/* Algorithm Deep-Dive Cards */}
       <div>
-        <h3 className="text-base font-bold text-zinc-900 mb-4">Detailed Algorithm Characteristics &amp; Hyperparameters</h3>
+        <h3 className="text-base font-bold text-zinc-900 mb-4">Cross-Validation &amp; Test Detail per Model</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
           {metrics.models.map((m, idx) => (
             <BorderGlow
@@ -266,31 +284,37 @@ export const ModelPerformance: React.FC = () => {
               <div className="p-6 h-full flex flex-col justify-between space-y-4">
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
-                    <h4 className="text-sm font-bold text-zinc-900">{m.name}</h4>
+                    <h4 className="text-sm font-bold text-zinc-900">{displayModelName(m.model)}</h4>
                     <span className="text-xs font-black text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-100">
                       {(m.accuracy * 100).toFixed(2)}%
                     </span>
                   </div>
 
-                  <div className="p-2.5 rounded-lg bg-zinc-50 border border-zinc-200 text-[11px] font-mono text-zinc-700 break-all">
-                    {m.parameters}
-                  </div>
-
                   <div className="space-y-2 text-xs">
-                    <div>
-                      <strong className="text-emerald-800 block text-[11px]">Key Advantages:</strong>
-                      <span className="text-zinc-600 leading-tight">{m.advantages}</span>
+                    <div className="flex items-center justify-between p-2 rounded-lg bg-zinc-50 border border-zinc-200">
+                      <span className="text-zinc-600">CV Accuracy (train only)</span>
+                      <strong className="text-zinc-900 font-mono">
+                        {(m.cvAccuracyMean * 100).toFixed(2)}% ± {(m.cvAccuracyStd * 100).toFixed(2)}%
+                      </strong>
                     </div>
-                    <div>
-                      <strong className="text-amber-800 block text-[11px]">Known Trade-offs:</strong>
-                      <span className="text-zinc-600 leading-tight">{m.limitations}</span>
+                    <div className="flex items-center justify-between p-2 rounded-lg bg-zinc-50 border border-zinc-200">
+                      <span className="text-zinc-600">CV Macro F1 (train only)</span>
+                      <strong className="text-zinc-900 font-mono">
+                        {(m.cvMacroF1Mean * 100).toFixed(2)}% ± {(m.cvMacroF1Std * 100).toFixed(2)}%
+                      </strong>
+                    </div>
+                    <div className="flex items-center justify-between p-2 rounded-lg bg-zinc-50 border border-zinc-200">
+                      <span className="text-zinc-600">Test Macro / Weighted F1</span>
+                      <strong className="text-zinc-900 font-mono">
+                        {(m.macroF1 * 100).toFixed(2)}% / {(m.weightedF1 * 100).toFixed(2)}%
+                      </strong>
                     </div>
                   </div>
                 </div>
 
                 <div className="pt-3 border-t border-zinc-100 flex items-center justify-between text-[11px] text-zinc-500">
-                  <span>Split: <strong>80/20 Stratified</strong></span>
-                  <span>Test: <strong>440 samples</strong></span>
+                  <span>Train: <strong>{metrics.trainSampleCount} samples</strong></span>
+                  <span>Test: <strong>{metrics.testSampleCount} samples</strong></span>
                 </div>
               </div>
             </BorderGlow>
@@ -360,46 +384,45 @@ export const ModelPerformance: React.FC = () => {
             <div className="space-y-4">
               <div className="flex items-center gap-2">
                 <ShieldCheck className="w-5 h-5 text-emerald-600" />
-                <h3 className="text-base font-bold text-zinc-900">Confusion Matrix &amp; Test Summary</h3>
+                <h3 className="text-base font-bold text-zinc-900">Test Set Summary</h3>
               </div>
               <p className="text-xs text-zinc-600 leading-relaxed">
-                On the holdout test set of 440 samples (20 samples per crop class), the best performing model (Random Forest) achieved:
+                On the holdout test set of {metrics.testSampleCount} samples, the selected model ({displayModelName(metrics.selectedModel)}) achieved:
               </p>
 
-              <div className="grid grid-cols-3 gap-3 text-center">
-                <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200">
-                  <span className="text-[10px] uppercase font-bold text-emerald-700 block">Total Tested</span>
-                  <strong className="text-2xl font-black text-emerald-900 block mt-1">
-                    {metrics.confusionMatrixHighlight.totalTested}
-                  </strong>
-                  <span className="text-[10px] text-emerald-600">440 Samples</span>
-                </div>
-                <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200">
-                  <span className="text-[10px] uppercase font-bold text-emerald-700 block">Correct Matches</span>
-                  <strong className="text-2xl font-black text-emerald-900 block mt-1">
-                    {metrics.confusionMatrixHighlight.correctPredictions}
-                  </strong>
-                  <span className="text-[10px] text-emerald-600">99.32% Correct</span>
-                </div>
-                <div className="p-4 rounded-xl bg-amber-50 border border-amber-200">
-                  <span className="text-[10px] uppercase font-bold text-amber-700 block">Misclassified</span>
-                  <strong className="text-2xl font-black text-amber-900 block mt-1">
-                    {metrics.confusionMatrixHighlight.misclassifications}
-                  </strong>
-                  <span className="text-[10px] text-amber-600">3 Edge Cases</span>
-                </div>
-              </div>
-
-              <div className="p-3.5 rounded-xl bg-zinc-50 border border-zinc-200 text-xs text-zinc-600 space-y-1">
-                <strong className="text-zinc-900 block font-semibold">Error Analysis Note:</strong>
-                <p className="leading-relaxed">
-                  The 3 rare misclassifications occurred exclusively between closely related leguminous pairs (e.g. <em>mothbeans</em> and <em>blackgram</em>) due to overlapping soil nitrogen (~20 ppm) and phosphorus (~48 ppm) requirements.
-                </p>
-              </div>
+              {bestModelMetric && (() => {
+                const correct = Math.round(bestModelMetric.accuracy * metrics.testSampleCount);
+                const misclassified = metrics.testSampleCount - correct;
+                return (
+                  <div className="grid grid-cols-3 gap-3 text-center">
+                    <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200">
+                      <span className="text-[10px] uppercase font-bold text-emerald-700 block">Total Tested</span>
+                      <strong className="text-2xl font-black text-emerald-900 block mt-1">
+                        {metrics.testSampleCount}
+                      </strong>
+                      <span className="text-[10px] text-emerald-600">Samples</span>
+                    </div>
+                    <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200">
+                      <span className="text-[10px] uppercase font-bold text-emerald-700 block">Correct Matches</span>
+                      <strong className="text-2xl font-black text-emerald-900 block mt-1">
+                        {correct}
+                      </strong>
+                      <span className="text-[10px] text-emerald-600">{(bestModelMetric.accuracy * 100).toFixed(2)}% Correct</span>
+                    </div>
+                    <div className="p-4 rounded-xl bg-amber-50 border border-amber-200">
+                      <span className="text-[10px] uppercase font-bold text-amber-700 block">Misclassified</span>
+                      <strong className="text-2xl font-black text-amber-900 block mt-1">
+                        {misclassified}
+                      </strong>
+                      <span className="text-[10px] text-amber-600">Derived from accuracy × test count</span>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
             <div className="p-3 rounded-xl bg-emerald-50/70 border border-emerald-100 text-xs text-emerald-900 font-medium">
-              Verified with Python Scikit-Learn 1.4.2 classification_report
+              {metrics.selectionCriterion}
             </div>
           </div>
         </BorderGlow>

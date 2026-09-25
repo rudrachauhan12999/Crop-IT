@@ -14,25 +14,44 @@ import { ModelMetric } from '../types/ml';
 import { Award, CheckCircle2, TrendingUp, BarChart3, Layers, Sparkles, Activity } from 'lucide-react';
 import BorderGlow from './BorderGlow';
 
+/** Presentation-only label/color mapping for the backend's internal model keys. Not ML data. */
+const MODEL_DISPLAY_NAMES: Record<string, string> = {
+  random_forest: 'Random Forest',
+  knn: 'KNN',
+  svm: 'SVM'
+};
+const MODEL_COLORS: Record<string, string> = {
+  random_forest: '#059669',
+  knn: '#0284c7',
+  svm: '#7c3aed'
+};
+
 interface MetricChartsProps {
   models: ModelMetric[];
+  testSampleCount: number;
 }
 
-export const MetricCharts: React.FC<MetricChartsProps> = ({ models }) => {
+export const MetricCharts: React.FC<MetricChartsProps> = ({ models, testSampleCount }) => {
   const [activeTab, setActiveTab] = useState<'leaderboard' | 'grouped' | 'detail'>('leaderboard');
   const [selectedMetric, setSelectedMetric] = useState<'accuracy' | 'precision' | 'recall' | 'f1'>('accuracy');
 
   const chartData = models.map((m) => ({
-    name: m.name.replace(' Classifier', ''),
-    fullName: m.name,
+    key: m.model,
+    name: MODEL_DISPLAY_NAMES[m.model] ?? m.model,
+    fullName: MODEL_DISPLAY_NAMES[m.model] ?? m.model,
     Accuracy: Number((m.accuracy * 100).toFixed(2)),
     Precision: Number((m.precision * 100).toFixed(2)),
     Recall: Number((m.recall * 100).toFixed(2)),
     'F1-Score': Number((m.f1 * 100).toFixed(2)),
-    errors: Math.round(440 * (1 - m.accuracy)),
-    correct: Math.round(440 * m.accuracy),
-    color: m.name.includes('Random') ? '#059669' : m.name.includes('Neighbors') ? '#0284c7' : '#7c3aed',
+    errors: Math.round(testSampleCount * (1 - m.accuracy)),
+    correct: Math.round(testSampleCount * m.accuracy),
+    color: MODEL_COLORS[m.model] ?? '#52525b',
   }));
+
+  const topModel = [...chartData].sort((a, b) => b.Accuracy - a.Accuracy)[0];
+  const runnerUp = [...chartData].sort((a, b) => b.Accuracy - a.Accuracy)[1];
+  const accuracyLead = topModel && runnerUp ? (topModel.Accuracy - runnerUp.Accuracy).toFixed(2) : null;
+  const minAccuracy = chartData.length > 0 ? Math.min(...chartData.map((m) => m.Accuracy)) : null;
 
   const metricDescriptions = {
     accuracy: { label: 'Accuracy', desc: 'Overall percentage of correct crop classifications out of 440 test samples.' },
@@ -61,7 +80,7 @@ export const MetricCharts: React.FC<MetricChartsProps> = ({ models }) => {
                 <h3 className="text-lg font-bold text-zinc-900">Model Performance &amp; Evaluation</h3>
               </div>
               <p className="text-xs text-zinc-500 mt-0.5">
-                Evaluation on 440 stratified test samples (80/20 train-test split on 2,200 Kaggle records)
+                Evaluation on {testSampleCount} stratified test samples
               </p>
             </div>
 
@@ -153,7 +172,7 @@ export const MetricCharts: React.FC<MetricChartsProps> = ({ models }) => {
 
                     return (
                       <div
-                        key={model.name}
+                        key={model.key}
                         className={`p-4 rounded-xl border-2 transition-all ${
                           isTop
                             ? 'bg-emerald-50/60 border-emerald-300 shadow-2xs'
@@ -185,7 +204,7 @@ export const MetricCharts: React.FC<MetricChartsProps> = ({ models }) => {
 
                           <div className="flex items-center gap-3">
                             <span className="text-xs text-zinc-500 font-mono">
-                              {model.correct} / 440 Correct ({model.errors} {model.errors === 1 ? 'error' : 'errors'})
+                              {model.correct} / {testSampleCount} Correct ({model.errors} {model.errors === 1 ? 'error' : 'errors'})
                             </span>
                             <span
                               className={`text-base font-black font-mono px-2.5 py-0.5 rounded-lg ${
@@ -224,12 +243,17 @@ export const MetricCharts: React.FC<MetricChartsProps> = ({ models }) => {
               </div>
 
               {/* Informational Key Takeaway */}
-              <div className="p-3.5 rounded-xl bg-emerald-50 border-2 border-emerald-300 flex items-start gap-2.5 text-xs text-emerald-950 shadow-2xs">
-                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-                <p>
-                  <strong>Statistical Finding:</strong> Random Forest out-performs both KNN (+1.14%) and SVM (+2.50%) on test data. Its multi-tree bagging architecture eliminates sensitivity to feature scale differences without requiring complex hyperplane margins.
-                </p>
-              </div>
+              {topModel && (
+                <div className="p-3.5 rounded-xl bg-emerald-50 border-2 border-emerald-300 flex items-start gap-2.5 text-xs text-emerald-950 shadow-2xs">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                  <p>
+                    <strong>Statistical Finding:</strong> {topModel.fullName} has the highest test-set accuracy at {topModel.Accuracy}%
+                    {runnerUp && accuracyLead && Number(accuracyLead) > 0
+                      ? `, ${accuracyLead} percentage points ahead of the next-best model (${runnerUp.fullName}).`
+                      : '.'}
+                  </p>
+                </div>
+              )}
             </div>
           )}
 
@@ -281,8 +305,14 @@ export const MetricCharts: React.FC<MetricChartsProps> = ({ models }) => {
               </div>
 
               <div className="flex items-center justify-between text-[11px] text-zinc-600 px-2 py-1 bg-zinc-50 rounded-lg border border-zinc-200">
-                <span>Baseline standard benchmark threshold: <strong>80.0%</strong></span>
-                <span className="font-mono">All 3 models exceed standard agronomic benchmark by &gt; 16.8%</span>
+                <span>Baseline benchmark threshold: <strong>80.0%</strong></span>
+                {minAccuracy !== null && (
+                  <span className="font-mono">
+                    {minAccuracy >= 80
+                      ? `All ${chartData.length} models exceed benchmark by > ${(minAccuracy - 80).toFixed(1)}%`
+                      : `Lowest model is ${(80 - minAccuracy).toFixed(1)}% below benchmark`}
+                  </span>
+                )}
               </div>
             </div>
           )}
@@ -298,12 +328,12 @@ export const MetricCharts: React.FC<MetricChartsProps> = ({ models }) => {
                     <th className="p-3 border-r border-zinc-200 text-sky-800 bg-sky-50/50">Precision (Weighted)</th>
                     <th className="p-3 border-r border-zinc-200 text-amber-800 bg-amber-50/50">Recall (Weighted)</th>
                     <th className="p-3 border-r border-zinc-200 text-purple-800 bg-purple-50/50">F1-Score</th>
-                    <th className="p-3 text-zinc-800">Test Errors (N=440)</th>
+                    <th className="p-3 text-zinc-800">Test Errors (N={testSampleCount})</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-200 bg-white font-mono">
-                  {chartData.map((m, idx) => (
-                    <tr key={m.name} className={idx === 0 ? 'bg-emerald-50/60 font-semibold' : 'hover:bg-zinc-50'}>
+                  {[...chartData].sort((a, b) => b.Accuracy - a.Accuracy).map((m, idx) => (
+                    <tr key={m.key} className={idx === 0 ? 'bg-emerald-50/60 font-semibold' : 'hover:bg-zinc-50'}>
                       <td className="p-3 font-sans text-zinc-900 flex items-center gap-2 border-r border-zinc-200">
                         <span>{idx === 0 ? '🥇' : idx === 1 ? '🥈' : '🥉'}</span>
                         <span className="font-bold">{m.fullName}</span>
@@ -313,7 +343,7 @@ export const MetricCharts: React.FC<MetricChartsProps> = ({ models }) => {
                       <td className="p-3 text-amber-800 border-r border-zinc-200 bg-amber-50/30">{m.Recall}%</td>
                       <td className="p-3 text-purple-800 border-r border-zinc-200 bg-purple-50/30">{m['F1-Score']}%</td>
                       <td className="p-3 text-zinc-700">
-                        {m.errors} / 440 ({((m.errors / 440) * 100).toFixed(2)}%)
+                        {m.errors} / {testSampleCount} ({testSampleCount > 0 ? ((m.errors / testSampleCount) * 100).toFixed(2) : '0.00'}%)
                       </td>
                     </tr>
                   ))}
