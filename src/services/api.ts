@@ -25,7 +25,6 @@ import {
   VisualizationsResponse,
   ClustersRequest,
   ClustersResponse,
-  DatasetAnalysisResponse,
   UnsupervisedAnalysisResponse,
   BackendHealthResponse,
   RealConfusionMatrixResponse,
@@ -464,13 +463,6 @@ export async function fetchConfusionMatrix(): Promise<RealConfusionMatrixRespons
  */
 export async function fetchFeatureImportance(): Promise<FeatureImportanceResponse> {
   return await fetchWithTimeout<FeatureImportanceResponse>('/api/feature-importance');
-}
-
-/**
- * Combined Exploratory Data Analysis helper (fetches /api/dataset-analysis or aggregates summary + visualizations)
- */
-export async function fetchDatasetAnalysis(): Promise<DatasetAnalysisResponse> {
-  return await fetchWithTimeout<DatasetAnalysisResponse>('/api/dataset-analysis');
 }
 
 /**

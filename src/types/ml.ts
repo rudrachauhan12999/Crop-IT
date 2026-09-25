@@ -83,42 +83,6 @@ export interface ModelMetric {
   cvMacroF1Std: number;
 }
 
-export interface PerClassMetric {
-  className: string;
-  support: number;
-  tp: number;
-  fp: number;
-  fn: number;
-  precision: number;
-  recall: number;
-  f1: number;
-}
-
-export interface ConfusionMatrixErrorDetail {
-  actual: string;
-  predicted: string;
-  count: number;
-  rootCause: string;
-  agronomicFactor: string;
-}
-
-export interface ConfusionMatrixData {
-  modelId: 'random_forest' | 'knn' | 'svm';
-  modelName: string;
-  algorithmFamily: string;
-  accuracy: number;
-  precision: number;
-  recall: number;
-  f1: number;
-  classes: string[];
-  matrix: number[][]; // [actualIdx][predictedIdx]
-  totalSamples: number;
-  correctCount: number;
-  errorCount: number;
-  perClassMetrics: PerClassMetric[];
-  errors: ConfusionMatrixErrorDetail[];
-}
-
 /** Matches FastAPI's /api/metrics MetricsResponse exactly. */
 export interface ModelMetricsResponse {
   models: ModelMetric[];
@@ -216,56 +180,6 @@ export interface PcaDataPoint {
   rainfall: number;
 }
 
-/**
- * The combined /api/dataset-analysis endpoint (server.ts) is not yet wired
- * to the real Python backend -- its correlation/PCA portions remain
- * Phase 7 work, so this type intentionally keeps its own legacy feature/
- * distribution shape (with the narrative name/unit/description/category
- * fields the still-fake native fallback returns) rather than reusing the
- * now-real FeatureStat/CropDistributionItem types above.
- */
-export interface DatasetAnalysisResponse {
-  datasetOverview: {
-    totalSamples: number;
-    featuresCount: number;
-    classesCount: number;
-    missingValues: number;
-    duplicateRows: number;
-    source: string;
-    targetColumn: string;
-  };
-  features: {
-    feature: string;
-    name: string;
-    unit: string;
-    min: number;
-    max: number;
-    mean: number;
-    median: number;
-    std: number;
-    q25: number;
-    q75: number;
-    description: string;
-  }[];
-  cropClasses: string[];
-  cropDistribution: {
-    crop: string;
-    samples: number;
-    category: string;
-  }[];
-  correlationMatrix: {
-    features: string[];
-    matrix: number[][];
-  };
-  pcaVariance: {
-    pc1Ratio: number;
-    pc2Ratio: number;
-    totalVarianceExplained: number;
-  };
-  pcaSamples: PcaDataPoint[];
-  backendSource: string;
-}
-
 export interface KMeansCluster {
   clusterId: number;
   clusterName?: string;
@@ -344,11 +258,9 @@ export interface BackendHealthResponse {
 
 /**
  * Real confusion-matrix contract (GET /api/confusion-matrix, Phase 7).
- * Distinct from the legacy ConfusionMatrixData/PerClassMetric/
- * ConfusionMatrixErrorDetail types above, which belong to the unused
- * fake src/data/confusionMatrixData.ts (left in place for Phase 9 to
- * remove) -- kept separate so neither side has to fake-fit the other's
- * shape.
+ * The legacy ConfusionMatrixData/PerClassMetric/ConfusionMatrixErrorDetail
+ * types and their only consumer, src/data/confusionMatrixData.ts, were
+ * removed in Phase 9.
  */
 export interface FeatureSimilarityEntry {
   feature: string;

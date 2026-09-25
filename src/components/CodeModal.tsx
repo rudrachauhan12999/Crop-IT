@@ -32,7 +32,7 @@ export const CodeModal: React.FC<CodeModalProps> = ({ isOpen, onClose }) => {
   if (!isOpen) return null;
 
   const currentCode = activeTab === 'train' ? trainCode : fastApiCode;
-  const filename = activeTab === 'train' ? 'train_crop_model.py' : 'main.py';
+  const filename = activeTab === 'train' ? 'train.py' : 'main.py';
 
   const handleCopy = () => {
     navigator.clipboard.writeText(currentCode);
@@ -84,7 +84,7 @@ export const CodeModal: React.FC<CodeModalProps> = ({ isOpen, onClose }) => {
               }`}
             >
               <FileCode2 className="w-3.5 h-3.5" />
-              <span>train_crop_model.py (Scikit-Learn)</span>
+              <span>train.py (Scikit-Learn)</span>
             </button>
             <button
               onClick={() => setActiveTab('fastapi')}

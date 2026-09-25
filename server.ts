@@ -1,33 +1,30 @@
 import express from 'express';
+import fs from 'fs';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
-import {
-  DATASET_OVERVIEW,
-  FEATURE_STATS,
-  CROP_PROFILES,
-  CORRELATION_MATRIX,
-  PCA_VARIANCE
-} from './server/dataset';
-import { generatePcaScatterPoints } from './server/mlEngine';
-import { PYTHON_TRAIN_SCRIPT, PYTHON_FASTAPI_SCRIPT } from './server/pythonScripts';
+import { STATIC_CROP_PROFILES } from './server/cropReference';
+import { analyzeInputStatus } from './server/inputAnalysis';
 import { SoilEnvironmentalInput } from './src/types/ml';
 
 /**
- * Real ML backend gateway. Every route below that talks to the actual
- * trained models or the real dataset (health, predict, metrics,
- * model-info, dataset-summary, visualizations, clusters,
- * confusion-matrix, feature-importance) proxies to the Python FastAPI
- * service and ONLY that service -- there is no fallback to
- * server/mlEngine.ts's fake prediction/metrics logic or the fake
- * CORRELATION_MATRIX/PCA_VARIANCE/KMEANS_CLUSTERS constants. If the
- * Python backend is not configured or unreachable, these routes return a
- * real 503 error instead of fabricating a result.
+ * Real ML backend gateway. Every route that talks to the actual trained
+ * models or the real dataset (health, predict, metrics, model-info,
+ * dataset-summary, visualizations, clusters, confusion-matrix,
+ * feature-importance) proxies to the Python FastAPI service and ONLY
+ * that service. There is no legacy TypeScript ML engine left to fall
+ * back to -- server/mlEngine.ts and server/dataset.ts (the fake
+ * prediction math, hardcoded metrics, and precomputed
+ * CORRELATION_MATRIX/PCA_VARIANCE/KMEANS_CLUSTERS constants) were removed
+ * in Phase 9. If the Python backend is not configured or unreachable,
+ * these routes return a real 503 error instead of fabricating a result.
  *
- * (server/mlEngine.ts's generatePcaScatterPoints and the fake dataset
- * constants below are still used ONLY by the combined, unused
- * /api/dataset-analysis route -- no page calls it any more since Phase 6
- * moved DatasetAnalysis.tsx to fetchDatasetSummary()+fetchVisualizations().
- * Its removal is Phase 9's legacy-cleanup job, not this one's.)
+ * The only non-ML enrichment left is `server/cropReference.ts` (static
+ * botanical facts -- scientific name, season, description) and
+ * `server/inputAnalysis.ts` (threshold buckets applied to the user's own
+ * real input values). Both are deliberately separate from the ML
+ * prediction: see the /api/predict handler below, which merges them into
+ * the real model's response by name/value lookup, never influencing what
+ * the model actually predicted.
  */
 function getPythonBaseUrl(): string | null {
   const url = process.env.PYTHON_BACKEND_URL;
@@ -134,9 +131,24 @@ async function startServer() {
         body: JSON.stringify(input)
       });
 
-      return res.status(result.ok ? 200 : result.status).json(
-        result.body ?? { error: 'ML backend error', message: 'No response body from Python backend' }
-      );
+      if (!result.ok) {
+        return res.status(result.status).json(
+          result.body ?? { error: 'ML backend error', message: 'No response body from Python backend' }
+        );
+      }
+
+      // Enrich the real prediction with static, non-ML context: threshold
+      // categorization of the user's own real input values, and (if the
+      // recommended crop has an entry) static botanical reference facts.
+      // Neither of these affects what crop was predicted or its probability.
+      const recommendedCrop = result.body?.recommendedCrop;
+      const cropProfile = typeof recommendedCrop === 'string' ? STATIC_CROP_PROFILES[recommendedCrop] : undefined;
+
+      return res.status(200).json({
+        ...result.body,
+        inputAnalysis: analyzeInputStatus(input),
+        ...(cropProfile ? { cropProfile } : {})
+      });
     } catch (err: any) {
       console.error('Prediction Error:', err);
       res.status(500).json({ error: 'Inference failed', message: err?.message || 'Internal server error' });
@@ -193,32 +205,6 @@ async function startServer() {
     });
   });
 
-  // Combined Dataset Analysis (GET /api/dataset-analysis)
-  app.get('/api/dataset-analysis', async (req, res) => {
-    try {
-      const crops = Object.keys(CROP_PROFILES);
-      const cropDistribution = crops.map(c => ({
-        crop: c,
-        samples: 100,
-        category: CROP_PROFILES[c].category
-      }));
-      const pcaSamples = generatePcaScatterPoints();
-
-      res.json({
-        datasetOverview: DATASET_OVERVIEW,
-        features: FEATURE_STATS,
-        cropClasses: crops,
-        cropDistribution,
-        correlationMatrix: CORRELATION_MATRIX,
-        pcaVariance: PCA_VARIANCE,
-        pcaSamples,
-        backendSource: 'Kaggle Dataset Mathematical Precomputations'
-      });
-    } catch (err: any) {
-      res.status(500).json({ error: 'Failed to retrieve dataset analysis' });
-    }
-  });
-
   // 6. Clusters Data (GET /api/clusters & GET /api/unsupervised-analysis) -- real K-Means.
   const handleClustersRequest = async (req: express.Request, res: express.Response) => {
     const result = await proxyToPython('/api/clusters');
@@ -246,12 +232,27 @@ async function startServer() {
     );
   });
 
-  // 7. Python ML code references (GET /api/python-code)
+  // 7. Real Python source code, read live from disk (GET /api/python-code).
+  // This always reflects the actual training pipeline and FastAPI service
+  // in python_backend/app/ -- never a hand-maintained illustrative copy
+  // that can drift out of sync with what the system really runs.
   app.get('/api/python-code', (req, res) => {
-    res.json({
-      trainScript: PYTHON_TRAIN_SCRIPT,
-      fastApiScript: PYTHON_FASTAPI_SCRIPT
-    });
+    try {
+      const trainScript = fs.readFileSync(
+        path.join(process.cwd(), 'python_backend', 'app', 'train.py'),
+        'utf-8'
+      );
+      const fastApiScript = fs.readFileSync(
+        path.join(process.cwd(), 'python_backend', 'app', 'main.py'),
+        'utf-8'
+      );
+      res.json({ trainScript, fastApiScript });
+    } catch (err: any) {
+      res.status(500).json({
+        error: 'Failed to read Python source files',
+        message: err?.message || 'Internal server error'
+      });
+    }
   });
 
   // Vite middleware in dev or static files in production
