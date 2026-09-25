@@ -444,7 +444,12 @@ export function normalizeClustersResponse(raw: any): ClustersResponse {
  */
 export async function fetchClusters(params?: ClustersRequest): Promise<ClustersResponse> {
   const query = params?.k ? `?k=${encodeURIComponent(params.k)}` : '';
-  const raw = await fetchWithTimeout<any>(`/api/clusters${query}`);
+  // K-Means across K=2..10 (each with an O(n^2) silhouette-score pass) is
+  // the most CPU-heavy real computation in this app -- measured ~11s on a
+  // free-tier deployment's shared CPU. The 8s default here would time out
+  // the browser's own request even after the Express proxy timeout was
+  // raised to accommodate it (see server.ts).
+  const raw = await fetchWithTimeout<any>(`/api/clusters${query}`, {}, 35000);
   return normalizeClustersResponse(raw);
 }
 
@@ -469,7 +474,8 @@ export async function fetchFeatureImportance(): Promise<FeatureImportanceRespons
  * Alias for fetchClusters matching the unsupervised analysis view requirements
  */
 export async function fetchUnsupervisedAnalysis(): Promise<UnsupervisedAnalysisResponse> {
-  const raw = await fetchWithTimeout<any>('/api/clusters');
+  // See fetchClusters() above: K-Means needs a longer timeout than the 8s default.
+  const raw = await fetchWithTimeout<any>('/api/clusters', {}, 35000);
   return normalizeClustersResponse(raw);
 }
 
