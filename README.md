@@ -1,7 +1,7 @@
 # Crop-IT
 
-**🌐 Live app:** <https://crop-it-frontend.onrender.com> · **🔌 Backend API:** <https://crop-it-backend.onrender.com>
-*(hosted on Render's free plan — the first request after a period of inactivity may be slow while the service cold-starts)*
+**Live app:** <https://crop-it-frontend.onrender.com> 
+**Backend API:** <https://crop-it-backend.onrender.com>
 
 A machine learning crop recommendation system: given soil chemistry (N, P, K, pH) and climate conditions (temperature, humidity, rainfall), it recommends the most suitable crop using a real scikit-learn classifier trained on the real [Kaggle Crop Recommendation Dataset](https://www.kaggle.com/datasets/atharvaingle/crop-recommendation-dataset).
 
@@ -307,8 +307,8 @@ This is deterministic (`random_state=42`) and will overwrite the committed artif
 ## Deployment
 
 **Live deployment** (Render, free plan):
-- 🌐 **App:** <https://crop-it-frontend.onrender.com>
-- 🔌 **Backend API (direct):** <https://crop-it-backend.onrender.com>
+-  **App:** <https://crop-it-frontend.onrender.com>
+-  **Backend API (direct):** <https://crop-it-backend.onrender.com>
 
 Deployed via the `render.yaml` Blueprint below, with no service-name collision — both services got their predicted URLs on the first deploy. Fully verified working end-to-end against the live URLs above: `/api/health`, a real `POST /api/predict` (correct crop, real model comparison, real `inputAnalysis`/`cropProfile` enrichment), `/api/metrics`, `/api/dataset-summary`, invalid-input `400`, `/api/correlation`, `/api/pca` (both via `/api/visualizations`), `/api/clusters`, `/api/confusion-matrix`, and `/api/feature-importance` — all returning real, correct data through the deployed frontend proxy, confirmed by re-checking the live site after each fix below.
 
