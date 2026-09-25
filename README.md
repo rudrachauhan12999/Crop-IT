@@ -1,5 +1,8 @@
 # Crop-IT
 
+**🌐 Live app:** <https://crop-it-frontend.onrender.com> · **🔌 Backend API:** <https://crop-it-backend.onrender.com>
+*(hosted on Render's free plan — the first request after a period of inactivity may be slow while the service cold-starts)*
+
 A machine learning crop recommendation system: given soil chemistry (N, P, K, pH) and climate conditions (temperature, humidity, rainfall), it recommends the most suitable crop using a real scikit-learn classifier trained on the real [Kaggle Crop Recommendation Dataset](https://www.kaggle.com/datasets/atharvaingle/crop-recommendation-dataset).
 
 Every prediction, metric, correlation, PCA projection, cluster, and confusion matrix shown in the app is computed from that real dataset and real trained models — nothing in the live prediction/analytics path is hardcoded or simulated.
@@ -304,12 +307,14 @@ This is deterministic (`random_state=42`) and will overwrite the committed artif
 ## Deployment
 
 **Live deployment** (Render, free plan):
-- Frontend / gateway: <https://crop-it-frontend.onrender.com>
-- Backend API (direct): <https://crop-it-backend.onrender.com>
+- 🌐 **App:** <https://crop-it-frontend.onrender.com>
+- 🔌 **Backend API (direct):** <https://crop-it-backend.onrender.com>
 
-Deployed via the `render.yaml` Blueprint below, with no service-name collision — both services got their predicted URLs on the first deploy. Verified working end-to-end against the live URLs above: `/api/health`, a real `POST /api/predict` (correct crop, real model comparison, real `inputAnalysis`/`cropProfile` enrichment), `/api/metrics`, `/api/dataset-summary`, invalid-input `400`, `/api/correlation`, `/api/pca` (both via `/api/visualizations`), `/api/clusters`, `/api/confusion-matrix`, and `/api/feature-importance` — all returning real, correct data through the deployed frontend proxy.
+Deployed via the `render.yaml` Blueprint below, with no service-name collision — both services got their predicted URLs on the first deploy. Fully verified working end-to-end against the live URLs above: `/api/health`, a real `POST /api/predict` (correct crop, real model comparison, real `inputAnalysis`/`cropProfile` enrichment), `/api/metrics`, `/api/dataset-summary`, invalid-input `400`, `/api/correlation`, `/api/pca` (both via `/api/visualizations`), `/api/clusters`, `/api/confusion-matrix`, and `/api/feature-importance` — all returning real, correct data through the deployed frontend proxy, confirmed by re-checking the live site after each fix below.
 
-One real issue this surfaced and fixed: `/api/clusters` (K-Means across K=2..10, each with an O(n²) silhouette-score pass) took ~10.5s on Render's free-tier shared CPU, longer than Express's default 8s proxy timeout — Express was misreporting a slow-but-working backend as "unreachable". Fixed by giving that one route a 30s timeout (see [API Endpoints](#api-endpoints)).
+Two real issues this surfaced, both fixed and confirmed live:
+- **Server-side:** `/api/clusters` (K-Means across K=2..10, each with an O(n²) silhouette-score pass) took ~11s on Render's free-tier shared CPU, longer than Express's default 8s proxy timeout — Express was misreporting a slow-but-working backend as "unreachable". Fixed by giving that one route a 30s timeout in `server.ts`.
+- **Client-side:** the browser's own fetch for that same route (`fetchClusters`/`fetchUnsupervisedAnalysis` in `src/services/api.ts`) had the same 8s default, so the Unsupervised Analysis page kept showing "ML Backend Unavailable" even after the server-side fix. Fixed by raising it to 35s there too — confirmed by checking the deployed JS bundle hash matches the build that includes this fix.
 
 `render.yaml` (repo root) is a [Render Blueprint](https://render.com/docs/blueprint-spec) that deploys both services together:
 
