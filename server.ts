@@ -212,8 +212,14 @@ async function startServer() {
   });
 
   // 6. Clusters Data (GET /api/clusters & GET /api/unsupervised-analysis) -- real K-Means.
+  // K-Means across K=2..10 (each with silhouette_score, an O(n^2) computation
+  // on 2200 samples) is genuinely CPU-heavy: ~1.3s on a fast dev machine but
+  // measured ~10.5s on a free-tier deployment's shared CPU -- comfortably
+  // over the default 8s proxy timeout, which made Express misreport a slow
+  // backend as "unreachable". 30s gives real headroom without the default's
+  // false negative.
   const handleClustersRequest = async (req: express.Request, res: express.Response) => {
-    const result = await proxyToPython('/api/clusters');
+    const result = await proxyToPython('/api/clusters', {}, 30000);
     res.status(result.ok ? 200 : result.status).json(
       result.body ?? { error: 'ML backend error', message: 'No response body from Python backend' }
     );

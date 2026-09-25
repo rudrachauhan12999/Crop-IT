@@ -163,21 +163,23 @@ These are the actual numbers computed on this machine's last training run; retra
 
 ## API Endpoints
 
-Served by FastAPI (`python_backend/app/main.py`) and proxied 1:1 by Express (`server.ts`) at the same paths:
+Served by FastAPI (`python_backend/app/main.py`). Express (`server.ts`) proxies most of these to the frontend at the same path; `/api/correlation` and `/api/pca` are Python-only (Express merges both into `/api/visualizations` for the browser — see below).
 
-| Method | Path | Real, computed from |
-|---|---|---|
-| GET | `/api/health` | Whether all model artifacts loaded successfully |
-| POST | `/api/predict` | The saved best model's `.predict()` / `.predict_proba()` |
-| GET | `/api/metrics` | `model_metadata.json` (Phase 4 training run) |
-| GET | `/api/model-info` | `model_metadata.json` (schema, class names, training timestamp) |
-| GET | `/api/dataset-summary` | The real CSV, loaded and computed per request |
-| GET | `/api/correlation` | `df[FEATURES].corr()` on the real CSV |
-| GET | `/api/pca` | `StandardScaler` + `PCA(n_components=2)` on the real CSV |
-| GET | `/api/clusters` | `StandardScaler` + `KMeans` (K=2..10, selected by max silhouette) |
-| GET | `/api/confusion-matrix` | The real per-model test-set confusion matrices saved during training |
-| GET | `/api/feature-importance` | The saved Random Forest's `feature_importances_` |
-| GET | `/api/python-code` | The actual `train.py`/`main.py` files, read live from disk |
+| Method | Path | Reachable via Express? | Real, computed from |
+|---|---|---|---|
+| GET | `/api/health` | ✅ same path | Whether all model artifacts loaded successfully |
+| POST | `/api/predict` | ✅ same path | The saved best model's `.predict()` / `.predict_proba()` |
+| GET | `/api/metrics` | ✅ same path | `model_metadata.json` (Phase 4 training run) |
+| GET | `/api/model-info` | ✅ same path | `model_metadata.json` (schema, class names, training timestamp) |
+| GET | `/api/dataset-summary` | ✅ same path | The real CSV, loaded and computed per request |
+| GET | `/api/correlation` | ⚠️ via `/api/visualizations` | `df[FEATURES].corr()` on the real CSV |
+| GET | `/api/pca` | ⚠️ via `/api/visualizations` | `StandardScaler` + `PCA(n_components=2)` on the real CSV |
+| GET | `/api/clusters` | ✅ same path (also aliased at `/api/unsupervised-analysis`) | `StandardScaler` + `KMeans` (K=2..10, selected by max silhouette) |
+| GET | `/api/confusion-matrix` | ✅ same path | The real per-model test-set confusion matrices saved during training |
+| GET | `/api/feature-importance` | ✅ same path | The saved Random Forest's `feature_importances_` |
+| GET | `/api/python-code` | ✅ same path | The actual `train.py`/`main.py` files, read live from disk |
+
+`/api/clusters` is the most CPU-intensive route (K-Means across K=2..10, each with an O(n²) silhouette-score pass over 2,200 samples) — Express proxies it with a 30s timeout rather than the default 8s, since it measured ~10.5s on a free-tier deployment's shared CPU vs. ~1.3s on a fast dev machine.
 
 `POST /api/predict` request body:
 ```json
@@ -301,12 +303,20 @@ This is deterministic (`random_state=42`) and will overwrite the committed artif
 
 ## Deployment
 
+**Live deployment** (Render, free plan):
+- Frontend / gateway: <https://crop-it-frontend.onrender.com>
+- Backend API (direct): <https://crop-it-backend.onrender.com>
+
+Deployed via the `render.yaml` Blueprint below, with no service-name collision — both services got their predicted URLs on the first deploy. Verified working end-to-end against the live URLs above: `/api/health`, a real `POST /api/predict` (correct crop, real model comparison, real `inputAnalysis`/`cropProfile` enrichment), `/api/metrics`, `/api/dataset-summary`, invalid-input `400`, `/api/correlation`, `/api/pca` (both via `/api/visualizations`), `/api/clusters`, `/api/confusion-matrix`, and `/api/feature-importance` — all returning real, correct data through the deployed frontend proxy.
+
+One real issue this surfaced and fixed: `/api/clusters` (K-Means across K=2..10, each with an O(n²) silhouette-score pass) took ~10.5s on Render's free-tier shared CPU, longer than Express's default 8s proxy timeout — Express was misreporting a slow-but-working backend as "unreachable". Fixed by giving that one route a 30s timeout (see [API Endpoints](#api-endpoints)).
+
 `render.yaml` (repo root) is a [Render Blueprint](https://render.com/docs/blueprint-spec) that deploys both services together:
 
 - **`crop-it-backend`** — the Python/FastAPI ML service (`rootDir: python_backend`), `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
 - **`crop-it-frontend`** — the Express gateway + React SPA, `npm ci --include=dev && npm run build` then `npm run start`
 
-**To deploy:** in the Render dashboard, **New → Blueprint**, connect this repository. Render detects `render.yaml` and provisions both services on its free plan.
+**To deploy your own copy:** in the Render dashboard, **New → Blueprint**, connect your fork of this repository. Render detects `render.yaml` and provisions both services on its free plan.
 
 **One-time step after the first deploy:** Render assigns each service a URL of the form `https://<name>.onrender.com`, unless that name is already taken elsewhere on Render (in which case it appends a random suffix). `render.yaml` assumes no collision and pre-fills `FRONTEND_ORIGIN` / `PYTHON_BACKEND_URL` accordingly. After the first deploy, confirm each service's real URL in the dashboard; if either differs from the guess, update the *other* service's corresponding env var and redeploy that one service.
 
