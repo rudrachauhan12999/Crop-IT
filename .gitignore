@@ -11,4 +11,4 @@ coverage/
 python_backend/.venv/
 python_backend/**/__pycache__/
 *.pyc
-python_backend/models/
+python_backend/.pytest_cache/
