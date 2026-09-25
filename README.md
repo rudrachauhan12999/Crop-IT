@@ -301,10 +301,21 @@ This is deterministic (`random_state=42`) and will overwrite the committed artif
 
 ## Deployment
 
-This repository does not include deployment configuration (no Dockerfile, no cloud manifests). To deploy:
-- Run the FastAPI service (`uvicorn app.main:app`) as a long-lived process, reachable by the Express gateway
-- Run `npm run build` then `npm run start` (or serve `dist/` behind a static host) for the frontend/gateway, with `PYTHON_BACKEND_URL` set to the FastAPI service's reachable address
-- Ensure `python_backend/models/` (the trained artifacts) is present wherever the FastAPI service runs — it is not regenerated automatically at startup
+`render.yaml` (repo root) is a [Render Blueprint](https://render.com/docs/blueprint-spec) that deploys both services together:
+
+- **`crop-it-backend`** — the Python/FastAPI ML service (`rootDir: python_backend`), `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+- **`crop-it-frontend`** — the Express gateway + React SPA, `npm ci --include=dev && npm run build` then `npm run start`
+
+**To deploy:** in the Render dashboard, **New → Blueprint**, connect this repository. Render detects `render.yaml` and provisions both services on its free plan.
+
+**One-time step after the first deploy:** Render assigns each service a URL of the form `https://<name>.onrender.com`, unless that name is already taken elsewhere on Render (in which case it appends a random suffix). `render.yaml` assumes no collision and pre-fills `FRONTEND_ORIGIN` / `PYTHON_BACKEND_URL` accordingly. After the first deploy, confirm each service's real URL in the dashboard; if either differs from the guess, update the *other* service's corresponding env var and redeploy that one service.
+
+Notes:
+- The committed `python_backend/models/*.joblib` and `model_metadata.json` deploy as-is — the build does **not** retrain. To ship a freshly retrained model, retrain locally (see [Retraining](#retraining)), commit the updated `models/`, then redeploy.
+- `data/Crop_recommendation.csv` is committed, so the backend's dataset-dependent endpoints work immediately without any extra upload step.
+- The browser only ever talks to `crop-it-frontend`; its Express gateway calls `crop-it-backend` server-to-server (not subject to browser CORS), so `FRONTEND_ORIGIN` mainly matters if you point `VITE_API_BASE_URL` at the backend directly instead of going through the gateway.
+- Render's free plan spins services down after inactivity — the first request after idling will be slow (cold start).
+- For any other host (Docker, a VPS, etc.), the same two commands apply: run the FastAPI service reachable by the gateway, and run `npm run build && npm run start` for the gateway with `PYTHON_BACKEND_URL` pointed at it.
 
 ## Limitations
 

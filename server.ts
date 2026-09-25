@@ -28,7 +28,11 @@ import { SoilEnvironmentalInput } from './src/types/ml';
  */
 function getPythonBaseUrl(): string | null {
   const url = process.env.PYTHON_BACKEND_URL;
-  return url ? url.replace(/\/$/, '') : null;
+  if (!url) return null;
+  // Tolerate a bare host (e.g. a copy-pasted Render service hostname with
+  // no scheme) in addition to a full URL.
+  const withScheme = /^https?:\/\//.test(url) ? url : `https://${url}`;
+  return withScheme.replace(/\/$/, '');
 }
 
 interface ProxyResult {
@@ -79,7 +83,9 @@ async function proxyToPython(
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  // Render (and most PaaS hosts) assign a port via $PORT and require the
+  // app to bind to it; 3000 remains the local-dev default.
+  const PORT = Number(process.env.PORT) || 3000;
 
   app.use(express.json());
 

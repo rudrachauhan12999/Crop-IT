@@ -1,0 +1,50 @@
+# Render Blueprint -- deploys both Crop-IT services together.
+# https://render.com/docs/blueprint-spec
+#
+# Deploy: in the Render dashboard, New -> Blueprint -> connect this repo.
+# Render detects this file and provisions both services below.
+#
+# IMPORTANT one-time step after the FIRST deploy:
+# Render assigns each service a URL of the form https://<name>.onrender.com,
+# UNLESS that name is already taken by someone else on Render, in which case
+# it appends a random suffix instead. The two placeholder URLs below
+# (FRONTEND_ORIGIN and PYTHON_BACKEND_URL) assume no collision. After the
+# first deploy, open each service in the Render dashboard, confirm its real
+# URL, and update the OTHER service's corresponding env var if it differs
+# -- then redeploy that service. See README.md's Deployment section.
+
+services:
+  # Python ML backend: loads the real trained models and the real dataset,
+  # serves predictions/metrics/analytics. See python_backend/app/main.py.
+  - type: web
+    name: crop-it-backend
+    runtime: python
+    plan: free
+    rootDir: python_backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: FRONTEND_ORIGIN
+        value: https://crop-it-frontend.onrender.com
+
+  # Express gateway + React frontend: serves the SPA and proxies /api/* to
+  # crop-it-backend above. No fake fallback -- see server.ts.
+  - type: web
+    name: crop-it-frontend
+    runtime: node
+    plan: free
+    # --include=dev is required: Render sets NODE_ENV=production for this
+    # service (used at runtime by server.ts to serve the built SPA), and
+    # npm skips devDependencies under NODE_ENV=production by default --
+    # but vite/esbuild/typescript (needed for `npm run build`) are
+    # devDependencies.
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm run start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PYTHON_BACKEND_URL
+        value: https://crop-it-backend.onrender.com

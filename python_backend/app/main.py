@@ -49,8 +49,11 @@ app = FastAPI(title="Crop-IT ML Inference API", lifespan=lifespan)
 
 # The existing Express/Vite dev server (server.ts) serves the frontend at
 # this origin by default; override with FRONTEND_ORIGIN for other setups.
-# Deliberately a single configurable origin, not a wildcard.
+# Deliberately a single configurable origin, not a wildcard. Tolerates a
+# bare host (e.g. a copy-pasted deployment hostname with no scheme).
 _frontend_origin = os.environ.get("FRONTEND_ORIGIN", "http://localhost:3000")
+if not _frontend_origin.startswith(("http://", "https://")):
+    _frontend_origin = f"https://{_frontend_origin}"
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[_frontend_origin],
