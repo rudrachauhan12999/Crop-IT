@@ -1,12 +1,13 @@
 """
 Pydantic schemas for the Crop-IT ML backend.
 
-These mirror the existing frontend contract (src/types/ml.ts
+The request schema mirrors the existing frontend contract (src/types/ml.ts
 SoilEnvironmentalInput and the bounds enforced in
-src/services/api.ts::validatePredictionInput) so that the Phase 5 FastAPI
-service validates requests identically to the React app. This module does
-NOT wire up any FastAPI routes yet -- that is Phase 5. Defining the schema
-now is part of Phase 3's "appropriate data validation" foundation.
+src/services/api.ts::validatePredictionInput) so the FastAPI service
+validates requests identically to the React app. Response schemas use
+camelCase field names directly (valid Python identifiers, just not
+PEP8-idiomatic) so they serialize to JSON matching the frontend's existing
+TypeScript field names with no alias configuration required.
 """
 
 from __future__ import annotations
@@ -24,3 +25,103 @@ class SoilEnvironmentalInput(BaseModel):
     humidity: float = Field(..., ge=10, le=100, description="Relative humidity (%)")
     ph: float = Field(..., ge=3.5, le=10.0, description="Soil pH")
     rainfall: float = Field(..., ge=10, le=350, description="Rainfall (mm)")
+
+
+class CropAlternative(BaseModel):
+    crop: str
+    probability: float
+
+
+class ModelPredictionDetail(BaseModel):
+    crop: str
+    probability: float
+
+
+class ModelComparison(BaseModel):
+    randomForest: ModelPredictionDetail
+    knn: ModelPredictionDetail
+    svm: ModelPredictionDetail
+
+
+class PredictionResponse(BaseModel):
+    """Matches PredictionResponse in src/types/ml.ts (the fields Phase 5 populates)."""
+
+    recommendedCrop: str
+    probability: float
+    alternatives: list[CropAlternative]
+    model: str
+    modelComparison: ModelComparison
+    backendSource: str
+
+
+class HealthResponse(BaseModel):
+    status: str
+    modelLoaded: bool
+    model: str | None = None
+    errors: dict[str, str] | None = None
+
+
+class ModelMetricEntry(BaseModel):
+    model: str
+    accuracy: float
+    precision: float
+    recall: float
+    f1: float
+    macroF1: float
+    weightedF1: float
+    trainingTimeSeconds: float
+    cvAccuracyMean: float
+    cvAccuracyStd: float
+    cvMacroF1Mean: float
+    cvMacroF1Std: float
+
+
+class MetricsResponse(BaseModel):
+    models: list[ModelMetricEntry]
+    selectedModel: str
+    selectionCriterion: str
+    selectionRationale: str
+    trainSampleCount: int
+    testSampleCount: int
+    backendSource: str
+
+
+class ModelInfoResponse(BaseModel):
+    selectedModel: str
+    featureNames: list[str]
+    target: str
+    classNames: list[str]
+    datasetRowCount: int
+    trainingTimestampUtc: str
+    randomState: int
+    testSize: float
+    availableModels: list[str]
+    pythonVersion: str
+    sklearnVersion: str
+
+
+class FeatureStatistic(BaseModel):
+    feature: str
+    min: float
+    max: float
+    mean: float
+    median: float
+    std: float
+    q25: float
+    q75: float
+
+
+class CropDistributionEntry(BaseModel):
+    crop: str
+    samples: int
+
+
+class DatasetSummaryResponse(BaseModel):
+    totalSamples: int
+    featureCount: int
+    classCount: int
+    missingValues: int
+    duplicateRows: int
+    targetColumn: str
+    classDistribution: list[CropDistributionEntry]
+    features: list[FeatureStatistic]
