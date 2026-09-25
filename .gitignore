@@ -6,3 +6,9 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Python ML backend
+python_backend/.venv/
+python_backend/**/__pycache__/
+*.pyc
+python_backend/models/
