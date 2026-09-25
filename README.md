@@ -1,6 +1,7 @@
 # Crop-IT
 
 **Live app:** <https://crop-it-frontend.onrender.com> 
+
 **Backend API:** <https://crop-it-backend.onrender.com>
 
 A machine learning crop recommendation system: given soil chemistry (N, P, K, pH) and climate conditions (temperature, humidity, rainfall), it recommends the most suitable crop using a real scikit-learn classifier trained on the real [Kaggle Crop Recommendation Dataset](https://www.kaggle.com/datasets/atharvaingle/crop-recommendation-dataset).
