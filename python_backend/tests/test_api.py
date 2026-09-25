@@ -161,3 +161,66 @@ def test_model_comparison_contains_all_three_models(client):
     assert set(comparison.keys()) == {"randomForest", "knn", "svm"}
     for detail in comparison.values():
         assert "crop" in detail and "probability" in detail
+
+
+# Phase 7: real analytics endpoints
+
+
+def test_correlation_endpoint(client):
+    resp = client.get("/api/correlation")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["features"] == FEATURES
+    n = len(FEATURES)
+    assert len(body["matrix"]) == n
+    for i in range(n):
+        assert body["matrix"][i][i] == pytest.approx(1.0, abs=1e-9)
+
+
+def test_pca_endpoint(client, real_df):
+    resp = client.get("/api/pca")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body["samples"]) == len(real_df)
+    assert 0.0 < body["totalVarianceExplained"] <= 1.0
+
+
+def test_clusters_endpoint(client, real_df):
+    resp = client.get("/api/clusters")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert 2 <= body["kValue"] <= 10
+    assert len(body["clusters"]) == body["kValue"]
+    assert sum(c["cropsCount"] for c in body["clusters"]) == len(real_df)
+    assert len(body["pcaClusterScatter"]) == len(real_df)
+
+
+def test_confusion_matrix_endpoint(client):
+    resp = client.get("/api/confusion-matrix")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert set(body["models"].keys()) == {"random_forest", "knn", "svm"}
+    assert body["bestModel"] == registry.best_model_name
+
+    for model_data in body["models"].values():
+        n = len(model_data["classes"])
+        assert len(model_data["matrix"]) == n
+        assert all(len(row) == n for row in model_data["matrix"])
+        matrix_total = sum(sum(row) for row in model_data["matrix"])
+        assert matrix_total == model_data["totalSamples"]
+        assert model_data["correctCount"] + model_data["errorCount"] == model_data["totalSamples"]
+        assert len(model_data["perClassMetrics"]) == n
+        for err in model_data["errors"]:
+            assert err["count"] > 0
+            assert err["actual"] != err["predicted"]
+
+
+def test_feature_importance_endpoint(client):
+    resp = client.get("/api/feature-importance")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert {i["feature"] for i in body["importances"]} == set(FEATURES)
+    total = sum(i["importance"] for i in body["importances"])
+    assert total == pytest.approx(1.0, abs=1e-6)
+    values = [i["importance"] for i in body["importances"]]
+    assert values == sorted(values, reverse=True)

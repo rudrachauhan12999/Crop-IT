@@ -1,6 +1,6 @@
-import React, { useState, useMemo } from 'react';
-import { ConfusionMatrixData, PerClassMetric, ConfusionMatrixErrorDetail } from '../types/ml';
-import { MODEL_CONFUSION_MATRICES, CROP_CLASSES_22 } from '../data/confusionMatrixData';
+import React, { useState, useEffect, useMemo } from 'react';
+import { RealModelConfusionMatrix, RealConfusionMatrixError, RealPerClassConfusionMetric, FeatureSimilarityEntry } from '../types/ml';
+import { fetchConfusionMatrix, BACKEND_UNAVAILABLE_MESSAGE } from '../services/api';
 import {
   Grid,
   AlertTriangle,
@@ -17,11 +17,35 @@ import {
   Check,
   TrendingDown,
   Cpu,
-  ShieldCheck
+  ShieldCheck,
+  RefreshCw,
+  Terminal
 } from 'lucide-react';
 
+const MODEL_DISPLAY_NAMES: Record<string, string> = {
+  random_forest: 'Random Forest',
+  knn: 'KNN (k=5)',
+  svm: 'SVM (RBF)'
+};
+
+function displayModelName(key: string): string {
+  return MODEL_DISPLAY_NAMES[key] ?? key;
+}
+
+/** Compact, real (computed) similarity summary -- never an invented agronomic story. */
+function formatSimilarFeatures(features: FeatureSimilarityEntry[]): string {
+  if (!features || features.length === 0) return 'No similarity data available.';
+  return features.map((f) => `${f.feature} (Δ${f.normalizedDifference.toFixed(2)}σ)`).join(', ');
+}
+
 export const ConfusionMatrix: React.FC = () => {
-  const [selectedModelKey, setSelectedModelKey] = useState<'random_forest' | 'knn' | 'svm'>('random_forest');
+  const [models, setModels] = useState<Record<string, RealModelConfusionMatrix> | null>(null);
+  const [bestModel, setBestModel] = useState<string>('random_forest');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [isBackendUnavailable, setIsBackendUnavailable] = useState(false);
+
+  const [selectedModelKey, setSelectedModelKey] = useState<string>('random_forest');
   const [viewMode, setViewMode] = useState<'full' | 'errors_only' | 'table'>('full');
   const [displayMode, setDisplayMode] = useState<'count' | 'percent'>('count');
   const [selectedCrop, setSelectedCrop] = useState<string | null>(null);
@@ -34,26 +58,97 @@ export const ConfusionMatrix: React.FC = () => {
     count: number;
   } | null>(null);
 
-  const activeModel: ConfusionMatrixData = MODEL_CONFUSION_MATRICES[selectedModelKey];
-  const classes = CROP_CLASSES_22;
+  const loadData = async () => {
+    setLoading(true);
+    setError(null);
+    setIsBackendUnavailable(false);
+    try {
+      const res = await fetchConfusionMatrix();
+      setModels(res.models);
+      setBestModel(res.bestModel);
+      setSelectedModelKey(res.bestModel);
+    } catch (err: any) {
+      console.error('Confusion Matrix API Error:', err);
+      const isUnavailable =
+        err.message === BACKEND_UNAVAILABLE_MESSAGE ||
+        err.isNetworkError ||
+        err.status === 503 ||
+        err.status === 502;
+      setIsBackendUnavailable(isUnavailable);
+      setError(err.message || BACKEND_UNAVAILABLE_MESSAGE);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="bg-white p-8 rounded-2xl border-2 border-emerald-200 shadow-xs text-center space-y-3">
+        <div className="w-8 h-8 border-3 border-emerald-600 border-t-transparent rounded-full animate-spin mx-auto"></div>
+        <p className="text-xs text-zinc-500 font-medium">Loading real confusion matrices from /api/confusion-matrix...</p>
+      </div>
+    );
+  }
+
+  if (error || !models) {
+    return (
+      <div className="bg-white p-6 rounded-2xl border-2 border-red-200 shadow-xs">
+        <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-red-800 text-xs space-y-3">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <h3 className="font-bold text-sm text-red-900">
+                {isBackendUnavailable ? 'ML Backend Unavailable' : 'Failed to Load Confusion Matrix'}
+              </h3>
+              <p className="text-red-700">{error || BACKEND_UNAVAILABLE_MESSAGE}</p>
+            </div>
+          </div>
+          {isBackendUnavailable && (
+            <div className="pt-2 border-t border-red-200/80 space-y-2">
+              <div className="p-2.5 rounded-lg bg-zinc-900 text-emerald-400 font-mono text-[11px] flex items-center justify-between">
+                <code>uvicorn app.main:app --reload --port 8000</code>
+                <Terminal className="w-3.5 h-3.5 text-zinc-400" />
+              </div>
+            </div>
+          )}
+          <button
+            onClick={loadData}
+            className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>Retry</span>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const activeModel: RealModelConfusionMatrix = models[selectedModelKey];
+  const classes = activeModel.classes;
+  const modelKeys = Object.keys(models);
 
   // Helper to get detailed 4-quadrant metrics for any class
   const getClassMetrics = (className: string) => {
-    const m = activeModel.perClassMetrics.find(metric => metric.className === className);
+    const m = activeModel.perClassMetrics.find((metric) => metric.className === className);
     if (!m) {
+      const fallbackSupport = Math.round(activeModel.totalSamples / classes.length);
       return {
         className,
-        support: 20,
-        tp: 20,
+        support: fallbackSupport,
+        tp: fallbackSupport,
         fp: 0,
         fn: 0,
-        tn: 420,
+        tn: activeModel.totalSamples - fallbackSupport,
         precision: 1,
         recall: 1,
-        f1Score: 1
+        f1: 1
       };
     }
-    const tn = 440 - (m.tp + m.fp + m.fn);
+    const tn = activeModel.totalSamples - (m.tp + m.fp + m.fn);
     return {
       ...m,
       tn
@@ -61,61 +156,52 @@ export const ConfusionMatrix: React.FC = () => {
   };
 
   // Filtered classes for search or error-only view
-  const activeClasses = useMemo(() => {
+  const activeClasses = (() => {
     let list = classes;
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase().trim();
-      list = list.filter(c => c.toLowerCase().includes(q));
+      list = list.filter((c) => c.toLowerCase().includes(q));
     }
     if (viewMode === 'errors_only') {
       const errorClassSet = new Set<string>();
-      activeModel.errors.forEach(e => {
+      activeModel.errors.forEach((e) => {
         errorClassSet.add(e.actual);
         errorClassSet.add(e.predicted);
       });
-      list = list.filter(c => errorClassSet.has(c));
+      list = list.filter((c) => errorClassSet.has(c));
     }
     return list;
-  }, [classes, searchQuery, viewMode, activeModel]);
+  })();
 
   // Selected crop details if any
-  const selectedCropMetric: PerClassMetric | undefined = useMemo(() => {
-    if (!selectedCrop) return undefined;
-    return activeModel.perClassMetrics.find(m => m.className === selectedCrop);
-  }, [selectedCrop, activeModel]);
+  const selectedCropMetric: RealPerClassConfusionMetric | undefined = selectedCrop
+    ? activeModel.perClassMetrics.find((m) => m.className === selectedCrop)
+    : undefined;
 
-  const selectedCropErrors: ConfusionMatrixErrorDetail[] = useMemo(() => {
-    if (!selectedCrop) return [];
-    return activeModel.errors.filter(
-      e => e.actual === selectedCrop || e.predicted === selectedCrop
-    );
-  }, [selectedCrop, activeModel]);
+  const selectedCropErrors: RealConfusionMatrixError[] = selectedCrop
+    ? activeModel.errors.filter((e) => e.actual === selectedCrop || e.predicted === selectedCrop)
+    : [];
 
   // Hovered cell metrics
-  const hoveredMetrics = useMemo(() => {
+  const hoveredMetrics = (() => {
     if (!hoveredCell) return null;
     const actualM = getClassMetrics(hoveredCell.actual);
     const predM = getClassMetrics(hoveredCell.predicted);
     const errorDetail = activeModel.errors.find(
-      e => e.actual === hoveredCell.actual && e.predicted === hoveredCell.predicted
+      (e) => e.actual === hoveredCell.actual && e.predicted === hoveredCell.predicted
     );
     const isDiagonal = hoveredCell.actual === hoveredCell.predicted;
-    return {
-      actualM,
-      predM,
-      errorDetail,
-      isDiagonal
-    };
-  }, [hoveredCell, activeModel]);
+    return { actualM, predM, errorDetail, isDiagonal };
+  })();
 
   // Get cell background styling
-  const getCellColor = (actual: string, predicted: string, count: number) => {
+  const getCellColor = (actual: string, predicted: string, count: number, rowSupport: number) => {
     const isDiagonal = actual === predicted;
     const isHovered = hoveredCell && hoveredCell.actual === actual && hoveredCell.predicted === predicted;
     const isSelected = selectedCrop && (selectedCrop === actual || selectedCrop === predicted);
 
     if (isDiagonal) {
-      if (count === 20) {
+      if (count === rowSupport) {
         return isHovered || isSelected ? 'bg-emerald-600 text-white font-bold' : 'bg-emerald-500 text-white font-semibold';
       } else if (count > 0) {
         return isHovered || isSelected ? 'bg-emerald-600 text-white font-bold' : 'bg-emerald-400 text-white font-medium';
@@ -139,27 +225,24 @@ export const ConfusionMatrix: React.FC = () => {
           <div className="flex items-center gap-2">
             <Grid className="w-5 h-5 text-emerald-600" />
             <h3 className="text-base sm:text-lg font-bold text-zinc-900">
-              Interactive Multi-Class Confusion Matrix (22 × 22)
+              Interactive Multi-Class Confusion Matrix ({classes.length} × {classes.length})
             </h3>
           </div>
           <p className="text-xs text-zinc-500 mt-1">
-            Examine exact prediction distributions, diagonal true positives, and off-diagonal misclassification vectors on the 440-sample test set.
+            Examine exact prediction distributions, diagonal true positives, and off-diagonal misclassification vectors on the {activeModel.totalSamples}-sample test set.
           </p>
         </div>
 
         {/* Model Selector Tabs */}
         <div className="flex flex-wrap items-center gap-2 bg-zinc-100 p-1.5 rounded-xl border border-zinc-300 self-start lg:self-auto shadow-2xs">
-          {[
-            { key: 'random_forest' as const, label: 'Random Forest', acc: '99.32%', badge: 'Optimal' },
-            { key: 'knn' as const, label: 'KNN (k=5)', acc: '98.18%' },
-            { key: 'svm' as const, label: 'SVM (RBF)', acc: '96.82%' }
-          ].map(tab => {
-            const isActive = selectedModelKey === tab.key;
+          {modelKeys.map((key) => {
+            const isActive = selectedModelKey === key;
+            const m = models[key];
             return (
               <button
-                key={tab.key}
+                key={key}
                 onClick={() => {
-                  setSelectedModelKey(tab.key);
+                  setSelectedModelKey(key);
                   setHoveredCell(null);
                 }}
                 className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-2 border transition-all cursor-pointer ${
@@ -168,17 +251,15 @@ export const ConfusionMatrix: React.FC = () => {
                     : 'text-zinc-700 border-transparent hover:text-zinc-900 hover:bg-white/50'
                 }`}
               >
-                <span>{tab.label}</span>
+                <span>{displayModelName(key)}</span>
                 <span
                   className={`text-[10px] px-1.5 py-0.5 rounded-md font-mono ${
                     isActive ? 'bg-emerald-100 text-emerald-800' : 'bg-zinc-200 text-zinc-700'
                   }`}
                 >
-                  {tab.acc}
+                  {(m.accuracy * 100).toFixed(2)}%
                 </span>
-                {tab.badge && (
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                )}
+                {key === bestModel && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" title="CV-selected best model"></span>}
               </button>
             );
           })}
@@ -251,7 +332,7 @@ export const ConfusionMatrix: React.FC = () => {
             }`}
           >
             <Grid className="w-3.5 h-3.5" />
-            <span>Full 22×22 Matrix</span>
+            <span>Full {classes.length}×{classes.length} Matrix</span>
           </button>
 
           <button
@@ -286,7 +367,7 @@ export const ConfusionMatrix: React.FC = () => {
               type="text"
               placeholder="Search crop class..."
               value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
+              onChange={(e) => setSearchQuery(e.target.value)}
               className="pl-8 pr-3 py-1.5 text-xs rounded-xl bg-white border-2 border-zinc-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 w-44"
             />
           </div>
@@ -354,7 +435,7 @@ export const ConfusionMatrix: React.FC = () => {
             <div className="min-w-[760px] inline-block">
               {/* Column Header (Predicted Classes) */}
               <div className="flex items-end mb-2 pl-24">
-                {activeClasses.map(colCrop => {
+                {activeClasses.map((colCrop) => {
                   const isSelected = selectedCrop === colCrop;
                   return (
                     <div
@@ -374,10 +455,11 @@ export const ConfusionMatrix: React.FC = () => {
 
               {/* Rows (Actual Classes) */}
               <div className="space-y-1">
-                {activeClasses.map(rowCrop => {
+                {activeClasses.map((rowCrop) => {
                   const actualIdx = classes.indexOf(rowCrop);
                   const isRowSelected = selectedCrop === rowCrop;
-                  const rowMetric = activeModel.perClassMetrics.find(m => m.className === rowCrop);
+                  const rowMetric = activeModel.perClassMetrics.find((m) => m.className === rowCrop);
+                  const rM = getClassMetrics(rowCrop);
 
                   return (
                     <div key={rowCrop} className="flex items-center">
@@ -389,7 +471,7 @@ export const ConfusionMatrix: React.FC = () => {
                             ? 'text-emerald-700 font-bold bg-emerald-50 rounded-md py-0.5 border border-emerald-200'
                             : 'text-zinc-600 hover:text-zinc-900'
                         }`}
-                        title={`Actual: ${rowCrop} (Accuracy: ${rowMetric ? (rowMetric.recall * 100).toFixed(0) : 100}%)`}
+                        title={`Actual: ${rowCrop} (Recall: ${rowMetric ? (rowMetric.recall * 100).toFixed(0) : '—'}%)`}
                       >
                         {rowMetric && rowMetric.fn > 0 && (
                           <span className="w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0"></span>
@@ -399,12 +481,11 @@ export const ConfusionMatrix: React.FC = () => {
 
                       {/* Cells for this row */}
                       <div className="flex items-center gap-1">
-                        {activeClasses.map(colCrop => {
+                        {activeClasses.map((colCrop) => {
                           const predIdx = classes.indexOf(colCrop);
                           const count = activeModel.matrix[actualIdx][predIdx];
-                          const cellBg = getCellColor(rowCrop, colCrop, count);
+                          const cellBg = getCellColor(rowCrop, colCrop, count, rM.support);
                           const isDiag = rowCrop === colCrop;
-                          const rM = getClassMetrics(rowCrop);
 
                           return (
                             <button
@@ -425,13 +506,13 @@ export const ConfusionMatrix: React.FC = () => {
                                 }
                               }}
                               className={`w-7 h-7 sm:w-8 sm:h-8 rounded flex items-center justify-center text-[10px] font-mono transition-all cursor-pointer border ${cellBg}`}
-                              title={`${isDiag ? 'TRUE POSITIVE (TP)' : count > 0 ? 'MISCLASSIFICATION' : 'ZERO ERROR'}\nActual: ${rowCrop}\nPredicted: ${colCrop}\nSamples: ${count} / 20\n\n[Class Metrics for '${rowCrop}']:\n• TP (True Positives): ${rM.tp}\n• FP (False Positives): ${rM.fp}\n• FN (False Negatives): ${rM.fn}\n• TN (True Negatives): ${rM.tn}\n• Precision: ${(rM.precision * 100).toFixed(1)}%\n• Recall: ${(rM.recall * 100).toFixed(1)}%\n• F1-Score: ${(rM.f1Score * 100).toFixed(1)}%`}
+                              title={`${isDiag ? 'TRUE POSITIVE (TP)' : count > 0 ? 'MISCLASSIFICATION' : 'ZERO ERROR'}\nActual: ${rowCrop}\nPredicted: ${colCrop}\nSamples: ${count} / ${rM.support}\n\n[Class Metrics for '${rowCrop}']:\n• TP (True Positives): ${rM.tp}\n• FP (False Positives): ${rM.fp}\n• FN (False Negatives): ${rM.fn}\n• TN (True Negatives): ${rM.tn}\n• Precision: ${(rM.precision * 100).toFixed(1)}%\n• Recall: ${(rM.recall * 100).toFixed(1)}%\n• F1-Score: ${(rM.f1 * 100).toFixed(1)}%`}
                             >
                               {count > 0 ? (
                                 displayMode === 'count' ? (
                                   count
                                 ) : (
-                                  `${Math.round((count / 20) * 100)}`
+                                  `${Math.round((count / rM.support) * 100)}`
                                 )
                               ) : (
                                 <span className="text-[9px] text-zinc-300">·</span>
@@ -477,7 +558,7 @@ export const ConfusionMatrix: React.FC = () => {
 
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-zinc-300">
-                    Cell Count: <strong className="text-white font-mono">{hoveredCell?.count}</strong> / 20 test samples
+                    Cell Count: <strong className="text-white font-mono">{hoveredCell?.count}</strong> / {hoveredMetrics.actualM.support} test samples
                   </span>
                   <span
                     className={`px-2.5 py-1 rounded-full font-bold text-[11px] ${
@@ -501,12 +582,12 @@ export const ConfusionMatrix: React.FC = () => {
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-400">
-                    Classification Metrics for Label: <span className="text-emerald-400 capitalize">{hoveredCell?.actual}</span> (N=440 Test Set)
+                    Classification Metrics for Label: <span className="text-emerald-400 capitalize">{hoveredCell?.actual}</span> (N={activeModel.totalSamples} Test Set)
                   </span>
                   <div className="flex items-center gap-3 text-[11px] font-mono text-zinc-300">
                     <span>Precision: <strong className="text-emerald-400">{(hoveredMetrics.actualM.precision * 100).toFixed(1)}%</strong></span>
                     <span>Recall: <strong className="text-teal-400">{(hoveredMetrics.actualM.recall * 100).toFixed(1)}%</strong></span>
-                    <span>F1: <strong className="text-purple-400">{(hoveredMetrics.actualM.f1Score * 100).toFixed(1)}%</strong></span>
+                    <span>F1: <strong className="text-purple-400">{(hoveredMetrics.actualM.f1 * 100).toFixed(1)}%</strong></span>
                   </div>
                 </div>
 
@@ -569,13 +650,13 @@ export const ConfusionMatrix: React.FC = () => {
                 </div>
               </div>
 
-              {/* Misclassification Root Cause if applicable */}
+              {/* Real feature-similarity note for this specific misclassification, if applicable */}
               {hoveredMetrics.errorDetail && (
                 <div className="p-2.5 rounded-xl bg-rose-950/40 border border-rose-500/20 text-xs flex items-start gap-2 text-rose-200">
                   <Info className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
                   <div>
-                    <strong>Agronomic Feature Overlap Reason: </strong>
-                    <span>{hoveredMetrics.errorDetail.agronomicReason}</span>
+                    <strong>Closest features (computed, normalized by dataset std): </strong>
+                    <span>{formatSimilarFeatures(hoveredMetrics.errorDetail.similarFeatures)}</span>
                   </div>
                 </div>
               )}
@@ -586,7 +667,7 @@ export const ConfusionMatrix: React.FC = () => {
                 <Info className="w-4 h-4 text-emerald-600 shrink-0" />
                 <span>Hover over any individual square to see the exact count of True Positives (TP), False Positives (FP), True Negatives (TN), and False Negatives (FN).</span>
               </div>
-              <span className="text-[11px] font-mono text-zinc-400">Total: 440 Test Samples</span>
+              <span className="text-[11px] font-mono text-zinc-400">Total: {activeModel.totalSamples} Test Samples</span>
             </div>
           )}
         </div>
@@ -608,9 +689,9 @@ export const ConfusionMatrix: React.FC = () => {
             </thead>
             <tbody className="divide-y divide-zinc-200 bg-white text-xs">
               {activeModel.perClassMetrics
-                .filter(m => !searchQuery || m.className.toLowerCase().includes(searchQuery.toLowerCase().trim()))
-                .map(metric => {
-                  const isPerfect = metric.tp === 20 && metric.fp === 0 && metric.fn === 0;
+                .filter((m) => !searchQuery || m.className.toLowerCase().includes(searchQuery.toLowerCase().trim()))
+                .map((metric) => {
+                  const isPerfect = metric.fp === 0 && metric.fn === 0;
                   const isSelected = selectedCrop === metric.className;
 
                   return (
@@ -679,7 +760,7 @@ export const ConfusionMatrix: React.FC = () => {
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
             <div className="p-3 bg-white rounded-lg border-2 border-emerald-200 shadow-2xs">
               <span className="text-[10px] text-zinc-500 uppercase font-bold block">True Positives</span>
-              <strong className="text-base text-emerald-900 block font-mono">{selectedCropMetric.tp} / 20</strong>
+              <strong className="text-base text-emerald-900 block font-mono">{selectedCropMetric.tp} / {selectedCropMetric.support}</strong>
             </div>
             <div className="p-3 bg-white rounded-lg border-2 border-rose-200 shadow-2xs">
               <span className="text-[10px] text-zinc-500 uppercase font-bold block">False Positives (FP)</span>
@@ -711,13 +792,14 @@ export const ConfusionMatrix: React.FC = () => {
                     <span className="font-bold text-zinc-900 capitalize font-mono">{err.actual}</span>
                     <span className="text-zinc-400 mx-1.5">misclassified as</span>
                     <span className="font-bold text-rose-700 capitalize font-mono">{err.predicted}</span>
-                    <span className="text-zinc-600 text-[11px] block mt-0.5">{err.rootCause}</span>
+                    <span className="text-zinc-600 text-[11px] block mt-0.5">
+                      Closest features: {formatSimilarFeatures(err.similarFeatures)}
+                    </span>
                   </div>
                   <div className="text-right shrink-0">
                     <span className="px-2 py-0.5 rounded bg-rose-100 text-rose-800 font-mono font-bold text-[10px] border border-rose-200">
                       {err.count} sample{err.count > 1 ? 's' : ''}
                     </span>
-                    <span className="text-[10px] text-zinc-500 block mt-0.5">{err.agronomicFactor}</span>
                   </div>
                 </div>
               ))}
@@ -731,46 +813,50 @@ export const ConfusionMatrix: React.FC = () => {
         </div>
       )}
 
-      {/* Comprehensive Error Breakdown & Agronomic Root-Cause Analysis */}
-      <div className="p-5 rounded-2xl bg-zinc-50 border-2 border-zinc-300 space-y-4 shadow-2xs">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 text-amber-600" />
-            <h4 className="text-sm font-bold text-zinc-900">
-              {activeModel.modelName} — Misclassification Diagnostics ({activeModel.errors.length} Inter-Class Overlaps)
-            </h4>
-          </div>
-          <span className="text-xs text-zinc-600 font-mono font-semibold">
-            {activeModel.errorCount} total errors out of 440 samples
-          </span>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {activeModel.errors.map((err, idx) => (
-            <div
-              key={idx}
-              className="p-3.5 rounded-xl bg-white border-2 border-zinc-200 hover:border-amber-400 shadow-2xs transition-all space-y-2"
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-1.5 font-mono text-xs font-bold">
-                  <span className="text-zinc-800 capitalize">{err.actual}</span>
-                  <ArrowRight className="w-3.5 h-3.5 text-zinc-400" />
-                  <span className="text-rose-700 capitalize">{err.predicted}</span>
-                </div>
-                <span className="px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 text-[10px] font-bold border border-rose-200">
-                  {err.count} Error{err.count > 1 ? 's' : ''}
-                </span>
-              </div>
-
-              <p className="text-xs text-zinc-600 leading-relaxed">{err.rootCause}</p>
-
-              <div className="p-2 rounded bg-zinc-50 text-[10px] font-mono text-zinc-600 border border-zinc-200">
-                {err.agronomicFactor}
-              </div>
+      {/* Comprehensive Error Breakdown & Real Feature-Similarity Diagnostics */}
+      {activeModel.errors.length > 0 && (
+        <div className="p-5 rounded-2xl bg-zinc-50 border-2 border-zinc-300 space-y-4 shadow-2xs">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-600" />
+              <h4 className="text-sm font-bold text-zinc-900">
+                {displayModelName(selectedModelKey)} — Misclassification Diagnostics ({activeModel.errors.length} Inter-Class Overlaps)
+              </h4>
             </div>
-          ))}
+            <span className="text-xs text-zinc-600 font-mono font-semibold">
+              {activeModel.errorCount} total errors out of {activeModel.totalSamples} samples
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {activeModel.errors.map((err, idx) => (
+              <div
+                key={idx}
+                className="p-3.5 rounded-xl bg-white border-2 border-zinc-200 hover:border-amber-400 shadow-2xs transition-all space-y-2"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 font-mono text-xs font-bold">
+                    <span className="text-zinc-800 capitalize">{err.actual}</span>
+                    <ArrowRight className="w-3.5 h-3.5 text-zinc-400" />
+                    <span className="text-rose-700 capitalize">{err.predicted}</span>
+                  </div>
+                  <span className="px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 text-[10px] font-bold border border-rose-200">
+                    {err.count} Error{err.count > 1 ? 's' : ''}
+                  </span>
+                </div>
+
+                <p className="text-xs text-zinc-600 leading-relaxed">
+                  Real per-class feature means show these two crops are most similar in:
+                </p>
+
+                <div className="p-2 rounded bg-zinc-50 text-[10px] font-mono text-zinc-600 border border-zinc-200">
+                  {formatSimilarFeatures(err.similarFeatures)}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };

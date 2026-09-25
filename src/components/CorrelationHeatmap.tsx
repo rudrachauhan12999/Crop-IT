@@ -11,6 +11,21 @@ export const CorrelationHeatmap: React.FC<CorrelationHeatmapProps> = ({
 }) => {
   const [hoveredCell, setHoveredCell] = useState<{ f1: string; f2: string; val: number } | null>(null);
 
+  // Real strongest off-diagonal correlation, computed from the actual matrix prop
+  // (never a hardcoded example value).
+  const strongestPair = (() => {
+    let best: { f1: string; f2: string; val: number } | null = null;
+    for (let i = 0; i < features.length; i++) {
+      for (let j = i + 1; j < features.length; j++) {
+        const val = matrix[i]?.[j];
+        if (typeof val === 'number' && (!best || Math.abs(val) > Math.abs(best.val))) {
+          best = { f1: features[i], f2: features[j], val };
+        }
+      }
+    }
+    return best;
+  })();
+
   // Helper to color cells based on Pearson correlation (-1 to +1)
   const getCellColor = (val: number) => {
     if (val === 1) return 'bg-emerald-600 text-white font-bold';
@@ -110,11 +125,11 @@ export const CorrelationHeatmap: React.FC<CorrelationHeatmapProps> = ({
             {hoveredCell.val < -0.2 && ' — Moderate negative correlation (e.g. high nitrogen crops vs dryland phosphorus)'}
             {Math.abs(hoveredCell.val) < 0.1 && ' — Virtually independent features, providing orthogonal information to classifiers'}
           </div>
-        ) : (
+        ) : strongestPair ? (
           <div className="text-zinc-600 italic">
-            Key Insight: Phosphorus (P) and Potassium (K) exhibit strong positive correlation (r = 0.736), characteristic of fruit crops like Apple &amp; Grapes.
+            Key Insight: {featureLabels[strongestPair.f1] || strongestPair.f1} and {featureLabels[strongestPair.f2] || strongestPair.f2} show the strongest correlation in this dataset (r = {strongestPair.val.toFixed(3)}).
           </div>
-        )}
+        ) : null}
       </div>
     </div>
   );

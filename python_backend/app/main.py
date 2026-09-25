@@ -21,10 +21,15 @@ from . import analysis, predictor
 from .data_loader import DatasetValidationError
 from .predictor import ModelLoadError, registry
 from .schemas import (
+    ClustersResponse,
+    ConfusionMatrixResponse,
+    CorrelationResponse,
     DatasetSummaryResponse,
+    FeatureImportanceResponse,
     HealthResponse,
     MetricsResponse,
     ModelInfoResponse,
+    PcaResponse,
     PredictionResponse,
     SoilEnvironmentalInput,
 )
@@ -122,3 +127,55 @@ def dataset_summary() -> dict:
         raise HTTPException(status_code=503, detail=str(exc))
     except DatasetValidationError as exc:
         raise HTTPException(status_code=503, detail=f"Dataset is invalid: {exc}")
+
+
+@app.get("/api/correlation", response_model=CorrelationResponse)
+def correlation() -> dict:
+    try:
+        return analysis.compute_correlation()
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except DatasetValidationError as exc:
+        raise HTTPException(status_code=503, detail=f"Dataset is invalid: {exc}")
+
+
+@app.get("/api/pca", response_model=PcaResponse)
+def pca() -> dict:
+    try:
+        return analysis.compute_pca()
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except DatasetValidationError as exc:
+        raise HTTPException(status_code=503, detail=f"Dataset is invalid: {exc}")
+
+
+@app.get("/api/clusters", response_model=ClustersResponse)
+def clusters() -> dict:
+    try:
+        return analysis.compute_clusters()
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except DatasetValidationError as exc:
+        raise HTTPException(status_code=503, detail=f"Dataset is invalid: {exc}")
+
+
+@app.get("/api/confusion-matrix", response_model=ConfusionMatrixResponse)
+def confusion_matrix() -> dict:
+    _require_ready()
+    try:
+        return predictor.get_confusion_matrix_response()
+    except ModelLoadError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except DatasetValidationError as exc:
+        raise HTTPException(status_code=503, detail=f"Dataset is invalid: {exc}")
+
+
+@app.get("/api/feature-importance", response_model=FeatureImportanceResponse)
+def feature_importance() -> dict:
+    _require_ready()
+    try:
+        return predictor.get_feature_importance_response()
+    except ModelLoadError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))

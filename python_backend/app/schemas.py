@@ -125,3 +125,117 @@ class DatasetSummaryResponse(BaseModel):
     targetColumn: str
     classDistribution: list[CropDistributionEntry]
     features: list[FeatureStatistic]
+
+
+class CorrelationResponse(BaseModel):
+    features: list[str]
+    matrix: list[list[float]]
+
+
+class PcaSample(BaseModel):
+    id: int
+    crop: str
+    pc1: float
+    pc2: float
+    n: float
+    p: float
+    k: float
+    rainfall: float
+
+
+class PcaResponse(BaseModel):
+    pc1VarianceRatio: float
+    pc2VarianceRatio: float
+    totalVarianceExplained: float
+    samples: list[PcaSample]
+
+
+class ElbowPointEntry(BaseModel):
+    k: int
+    inertia: float
+    silhouetteScore: float
+
+
+class ClusterEntry(BaseModel):
+    clusterId: int
+    clusterName: str
+    cropsCount: int
+    representativeCrops: list[str]
+    centroid: dict[str, float]
+
+
+class PcaClusterSample(PcaSample):
+    cluster: int
+
+
+class PcaVariance(BaseModel):
+    pc1Ratio: float
+    pc2Ratio: float
+    totalVarianceExplained: float
+
+
+class ClustersResponse(BaseModel):
+    algorithm: str
+    kValue: int
+    optimalKRationale: str
+    silhouetteScore: float
+    elbowData: list[ElbowPointEntry]
+    clusters: list[ClusterEntry]
+    pcaClusterScatter: list[PcaClusterSample]
+    pcaVariance: PcaVariance
+
+
+class FeatureSimilarityEntry(BaseModel):
+    feature: str
+    actualMean: float
+    predictedMean: float
+    normalizedDifference: float
+
+
+class ConfusionMatrixError(BaseModel):
+    actual: str
+    predicted: str
+    count: int
+    similarFeatures: list[FeatureSimilarityEntry]
+
+
+class PerClassConfusionMetric(BaseModel):
+    className: str
+    support: int
+    tp: int
+    fp: int
+    fn: int
+    precision: float
+    recall: float
+    f1: float
+
+
+class ModelConfusionMatrix(BaseModel):
+    modelId: str
+    accuracy: float
+    precision: float
+    recall: float
+    f1: float
+    classes: list[str]
+    matrix: list[list[int]]
+    totalSamples: int
+    correctCount: int
+    errorCount: int
+    perClassMetrics: list[PerClassConfusionMetric]
+    errors: list[ConfusionMatrixError]
+
+
+class ConfusionMatrixResponse(BaseModel):
+    models: dict[str, ModelConfusionMatrix]
+    bestModel: str
+
+
+class FeatureImportanceEntry(BaseModel):
+    feature: str
+    importance: float
+
+
+class FeatureImportanceResponse(BaseModel):
+    model: str
+    importances: list[FeatureImportanceEntry]
+    note: str

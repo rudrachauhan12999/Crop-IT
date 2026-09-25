@@ -206,7 +206,8 @@ export interface CorrelationItem {
 export interface PcaDataPoint {
   id: number;
   crop: string;
-  cluster: number;
+  /** Present only when the point comes from the K-Means /api/clusters response; absent for plain /api/pca EDA points. */
+  cluster?: number;
   pc1: number;
   pc2: number;
   n: number;
@@ -339,4 +340,68 @@ export interface BackendHealthResponse {
   modelLoaded: boolean;
   model: string | null;
   errors?: Record<string, string> | null;
+}
+
+/**
+ * Real confusion-matrix contract (GET /api/confusion-matrix, Phase 7).
+ * Distinct from the legacy ConfusionMatrixData/PerClassMetric/
+ * ConfusionMatrixErrorDetail types above, which belong to the unused
+ * fake src/data/confusionMatrixData.ts (left in place for Phase 9 to
+ * remove) -- kept separate so neither side has to fake-fit the other's
+ * shape.
+ */
+export interface FeatureSimilarityEntry {
+  feature: string;
+  actualMean: number;
+  predictedMean: number;
+  normalizedDifference: number;
+}
+
+export interface RealConfusionMatrixError {
+  actual: string;
+  predicted: string;
+  count: number;
+  similarFeatures: FeatureSimilarityEntry[];
+}
+
+export interface RealPerClassConfusionMetric {
+  className: string;
+  support: number;
+  tp: number;
+  fp: number;
+  fn: number;
+  precision: number;
+  recall: number;
+  f1: number;
+}
+
+export interface RealModelConfusionMatrix {
+  modelId: string;
+  accuracy: number;
+  precision: number;
+  recall: number;
+  f1: number;
+  classes: string[];
+  matrix: number[][];
+  totalSamples: number;
+  correctCount: number;
+  errorCount: number;
+  perClassMetrics: RealPerClassConfusionMetric[];
+  errors: RealConfusionMatrixError[];
+}
+
+export interface RealConfusionMatrixResponse {
+  models: Record<string, RealModelConfusionMatrix>;
+  bestModel: string;
+}
+
+export interface FeatureImportanceEntry {
+  feature: string;
+  importance: number;
+}
+
+export interface FeatureImportanceResponse {
+  model: string;
+  importances: FeatureImportanceEntry[];
+  note: string;
 }

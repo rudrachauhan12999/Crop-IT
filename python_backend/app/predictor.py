@@ -15,6 +15,7 @@ from typing import Any
 import joblib
 import pandas as pd
 
+from .analysis import compute_feature_similarity
 from .config import FEATURES, MODELS_DIR
 from .schemas import SoilEnvironmentalInput
 
@@ -263,4 +264,113 @@ def get_model_info_response() -> dict[str, Any]:
         "availableModels": meta["model_names"],
         "pythonVersion": meta["python_version"],
         "sklearnVersion": meta["sklearn_version"],
+    }
+
+
+def get_confusion_matrix_response() -> dict[str, Any]:
+    """
+    Build the /api/confusion-matrix response entirely from the real
+    per-model confusion matrices Phase 4 computed on the actual holdout
+    test set (saved in model_metadata.json -- never hardcoded, never
+    recomputed/retrained here).
+
+    Each off-diagonal error cell includes a `similarFeatures` list: the
+    real features with the smallest normalized difference between the two
+    classes' actual per-class means in the dataset (see
+    analysis.compute_feature_similarity). This is a genuine, computed
+    signal for why the two classes may be confused -- not an invented
+    agronomic explanation.
+    """
+    meta = registry.metadata
+    models_out: dict[str, Any] = {}
+
+    for name in meta["model_names"]:
+        m = meta["model_metrics"][name]
+        matrix: list[list[int]] = m["confusion_matrix"]
+        labels: list[str] = m["confusion_matrix_labels"]
+        report = meta["classification_reports"][name]
+        n = len(labels)
+
+        total_samples = sum(sum(row) for row in matrix)
+        correct_count = sum(matrix[i][i] for i in range(n))
+        error_count = total_samples - correct_count
+
+        per_class_metrics = []
+        for idx, label in enumerate(labels):
+            cls_report = report.get(label, {})
+            support = int(sum(matrix[idx]))
+            tp = int(matrix[idx][idx])
+            fp = int(sum(matrix[r][idx] for r in range(n)) - tp)
+            fn = int(support - tp)
+            per_class_metrics.append(
+                {
+                    "className": label,
+                    "support": support,
+                    "tp": tp,
+                    "fp": fp,
+                    "fn": fn,
+                    "precision": float(cls_report.get("precision", 0.0)),
+                    "recall": float(cls_report.get("recall", 0.0)),
+                    "f1": float(cls_report.get("f1-score", 0.0)),
+                }
+            )
+
+        errors = []
+        for i, actual_label in enumerate(labels):
+            for j, predicted_label in enumerate(labels):
+                if i != j and matrix[i][j] > 0:
+                    errors.append(
+                        {
+                            "actual": actual_label,
+                            "predicted": predicted_label,
+                            "count": int(matrix[i][j]),
+                            "similarFeatures": compute_feature_similarity(actual_label, predicted_label),
+                        }
+                    )
+
+        models_out[name] = {
+            "modelId": name,
+            "accuracy": m["accuracy"],
+            "precision": m["precision"],
+            "recall": m["recall"],
+            "f1": m["f1"],
+            "classes": labels,
+            "matrix": matrix,
+            "totalSamples": total_samples,
+            "correctCount": correct_count,
+            "errorCount": error_count,
+            "perClassMetrics": per_class_metrics,
+            "errors": errors,
+        }
+
+    return {
+        "models": models_out,
+        "bestModel": meta["model_selection"]["selected_model"],
+    }
+
+
+def get_feature_importance_response() -> dict[str, Any]:
+    """
+    Real Random Forest feature_importances_ from the saved model. Labeled
+    explicitly as model feature importance (mean decrease in impurity),
+    not a causal agronomic explanation.
+    """
+    pipeline = registry.get_pipeline("random_forest")
+    model = pipeline.named_steps["model"]
+    importances = model.feature_importances_
+
+    ranked = sorted(
+        ({"feature": f, "importance": float(v)} for f, v in zip(FEATURES, importances)),
+        key=lambda d: d["importance"],
+        reverse=True,
+    )
+
+    return {
+        "model": "random_forest",
+        "importances": ranked,
+        "note": (
+            "Random Forest feature importance (mean decrease in impurity). "
+            "This reflects each feature's usefulness for the model's split "
+            "decisions, not a causal agronomic relationship."
+        ),
     }

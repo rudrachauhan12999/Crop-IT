@@ -3,7 +3,7 @@
  * Connects frontend UI components to external Python FastAPI ML backend / Express gateway.
  * 
  * Features:
- * - Endpoints: POST /api/predict, GET /api/metrics, GET /api/model-info, GET /api/dataset-summary, GET /api/visualizations, GET /api/clusters
+ * - Endpoints: POST /api/predict, GET /api/metrics, GET /api/model-info, GET /api/dataset-summary, GET /api/visualizations, GET /api/clusters, GET /api/confusion-matrix, GET /api/feature-importance
  * - Configurable API base URL via VITE_API_BASE_URL
  * - Input validation with clear error messages
  * - Request timeout handling (AbortController)
@@ -27,7 +27,9 @@ import {
   ClustersResponse,
   DatasetAnalysisResponse,
   UnsupervisedAnalysisResponse,
-  BackendHealthResponse
+  BackendHealthResponse,
+  RealConfusionMatrixResponse,
+  FeatureImportanceResponse
 } from '../types/ml';
 
 // Configurable API base URL (from env or runtime)
@@ -445,6 +447,23 @@ export async function fetchClusters(params?: ClustersRequest): Promise<ClustersR
   const query = params?.k ? `?k=${encodeURIComponent(params.k)}` : '';
   const raw = await fetchWithTimeout<any>(`/api/clusters${query}`);
   return normalizeClustersResponse(raw);
+}
+
+/**
+ * GET /api/confusion-matrix
+ * Fetches real per-model confusion matrices (all three models) computed
+ * on the actual holdout test set during Phase 4 training.
+ */
+export async function fetchConfusionMatrix(): Promise<RealConfusionMatrixResponse> {
+  return await fetchWithTimeout<RealConfusionMatrixResponse>('/api/confusion-matrix');
+}
+
+/**
+ * GET /api/feature-importance
+ * Fetches real Random Forest feature_importances_ from the saved model.
+ */
+export async function fetchFeatureImportance(): Promise<FeatureImportanceResponse> {
+  return await fetchWithTimeout<FeatureImportanceResponse>('/api/feature-importance');
 }
 
 /**
