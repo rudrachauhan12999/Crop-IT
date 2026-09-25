@@ -1,0 +1,6 @@
+{
+  "name": "Crop-IT: ML Crop Recommendation System",
+  "description": "Machine Learning Crop Recommendation System with Random Forest, KNN, SVM, K-Means Clustering, PCA, and EDA on the Kaggle agricultural dataset.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
